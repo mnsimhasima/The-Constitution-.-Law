@@ -1,0 +1,495 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private authenticated reader profile, language preference, and study activity metrics.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "maxLength": 180 },
+        "photoURL": { "type": "string", "maxLength": 500 },
+        "preferredLanguage": { "type": "string", "enum": ["en", "te", "hi", "es", "fr", "ar"] },
+        "streakDays": { "type": "number" },
+        "audioMinutes": { "type": "number" },
+        "startedPlanIds": { "type": "array", "description": "Up to 30 active study plan IDs" },
+        "completedPlanDayIds": { "type": "array", "description": "Up to 100 completed plan day IDs" },
+        "readChapterIds": { "type": "array", "description": "Up to 100 read chapter IDs" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "photoURL",
+        "preferredLanguage",
+        "streakDays",
+        "audioMinutes",
+        "startedPlanIds",
+        "completedPlanDayIds",
+        "readChapterIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserNote": {
+      "title": "UserNote",
+      "description": "Personal study note attached to a legal article or clause.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "clauseKey": { "type": "string", "maxLength": 160 },
+        "bookId": { "type": "string", "maxLength": 80 },
+        "chapterId": { "type": "string", "maxLength": 80 },
+        "clauseId": { "type": "string", "maxLength": 80 },
+        "content": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "clauseKey",
+        "bookId",
+        "chapterId",
+        "clauseId",
+        "content",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserAnnotation": {
+      "title": "UserAnnotation",
+      "description": "Highlight or bookmark saved by a user on a clause.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "clauseKey": { "type": "string", "maxLength": 160 },
+        "bookId": { "type": "string", "maxLength": 80 },
+        "chapterId": { "type": "string", "maxLength": 80 },
+        "clauseId": { "type": "string", "maxLength": 80 },
+        "kind": { "type": "string", "enum": ["highlight", "bookmark"] },
+        "color": { "type": "string", "enum": ["none", "amber", "sage", "sky", "rose", "lilac"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "clauseKey",
+        "bookId",
+        "chapterId",
+        "clauseId",
+        "kind",
+        "color",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CustomLawBook": {
+      "title": "CustomLawBook",
+      "description": "Legacy user-contributed law book document.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "shortTitle": { "type": "string", "maxLength": 80 },
+        "titleEn": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "jurisdiction": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "year": { "type": "string", "maxLength": 32 },
+        "category": { "type": "string", "enum": ["constitutions", "international", "statutory", "history", "custom"] },
+        "chapterTitleEn": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "clauseNumber": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "principleEn": { "type": "string", "maxLength": 120 },
+        "clauseTextEn": { "type": "string", "minLength": 15, "maxLength": 4000 },
+        "explanationEn": { "type": "string", "minLength": 15, "maxLength": 4000 },
+        "clauseTextTe": { "type": "string", "maxLength": 4000 },
+        "explanationTe": { "type": "string", "maxLength": 4000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "shortTitle",
+        "titleEn",
+        "jurisdiction",
+        "year",
+        "category",
+        "chapterTitleEn",
+        "clauseNumber",
+        "principleEn",
+        "clauseTextEn",
+        "explanationEn",
+        "clauseTextTe",
+        "explanationTe",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StaffRole": {
+      "title": "StaffRole",
+      "description": "Server-trusted RBAC role assignment for dashboard staff (admin, editor, reviewer, security).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 180 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin", "editor", "reviewer", "security"] },
+        "assignedBy": { "type": "string", "maxLength": 180 },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "assignedBy", "active", "createdAt", "updatedAt"]
+    },
+    "UserDirectoryEntry": {
+      "title": "UserDirectoryEntry",
+      "description": "Google sign-in monitoring and account status record visible to Admin and Security staff.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "maxLength": 180 },
+        "photoURL": { "type": "string", "maxLength": 500 },
+        "provider": { "type": "string", "maxLength": 60 },
+        "role": { "type": "string", "enum": ["user", "admin", "editor", "reviewer", "security"] },
+        "status": { "type": "string", "enum": ["active", "flagged", "suspended"] },
+        "lastLoginAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "email", "photoURL", "provider", "role", "status", "lastLoginAt", "createdAt", "updatedAt"]
+    },
+    "CmsBook": {
+      "title": "CmsBook",
+      "description": "Backend-managed digital constitution, law, or history book with chapters, verses/clauses, meanings, and publication status.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "shortTitle": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "title": { "type": "object" },
+        "subtitle": { "type": "object" },
+        "jurisdiction": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "year": { "type": "string", "maxLength": 32 },
+        "category": { "type": "string", "enum": ["constitutions", "history", "statutory", "international"] },
+        "coverTone": { "type": "string", "enum": ["cobalt", "sapphire", "slate", "emerald", "amber", "obsidian"] },
+        "status": { "type": "string", "enum": ["draft", "pending_review", "published", "changes_requested"] },
+        "sourceAttribution": { "type": "string", "maxLength": 300 },
+        "rightsLicense": { "type": "string", "maxLength": 160 },
+        "chapters": { "type": "array", "description": "Up to 40 structured chapters with clauses and meanings" },
+        "createdByUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdByEmail": { "type": "string", "maxLength": 180 },
+        "reviewedByEmail": { "type": "string", "maxLength": 180 },
+        "reviewNotes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "shortTitle",
+        "title",
+        "subtitle",
+        "jurisdiction",
+        "year",
+        "category",
+        "coverTone",
+        "status",
+        "sourceAttribution",
+        "rightsLicense",
+        "chapters",
+        "createdByUid",
+        "createdByEmail",
+        "reviewedByEmail",
+        "reviewNotes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AudioTrack": {
+      "title": "AudioTrack",
+      "description": "Audio narration asset linked to a book chapter and language.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "bookId": { "type": "string", "maxLength": 128 },
+        "bookTitle": { "type": "string", "maxLength": 160 },
+        "chapterId": { "type": "string", "maxLength": 128 },
+        "chapterTitle": { "type": "string", "maxLength": 160 },
+        "language": { "type": "string", "enum": ["en", "te", "hi", "es", "fr", "ar"] },
+        "narrator": { "type": "string", "maxLength": 120 },
+        "durationLabel": { "type": "string", "maxLength": 32 },
+        "audioUrl": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["draft", "pending_review", "published"] },
+        "uploadedByUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uploadedByEmail": { "type": "string", "maxLength": 180 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "bookId",
+        "bookTitle",
+        "chapterId",
+        "chapterTitle",
+        "language",
+        "narrator",
+        "durationLabel",
+        "audioUrl",
+        "status",
+        "uploadedByUid",
+        "uploadedByEmail",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CommunityPost": {
+      "title": "CommunityPost",
+      "description": "Moderated text-only civic and legal post shared by a logged-in user in Studio Community.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "authorHandle": { "type": "string", "maxLength": 80 },
+        "authorInitials": { "type": "string", "maxLength": 4 },
+        "authorTone": { "type": "string", "maxLength": 40 },
+        "tag": { "type": "string", "maxLength": 60 },
+        "content": { "type": "string", "minLength": 8, "maxLength": 1000 },
+        "bookId": { "type": "string", "maxLength": 128 },
+        "chapterId": { "type": "string", "maxLength": 128 },
+        "likesCount": { "type": "number" },
+        "moderationStatus": { "type": "string", "enum": ["approved", "removed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "authorId",
+        "authorName",
+        "authorHandle",
+        "authorInitials",
+        "authorTone",
+        "tag",
+        "content",
+        "bookId",
+        "chapterId",
+        "likesCount",
+        "moderationStatus",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Technical issue ticket raised by a mobile app user and handled by Security or Admin staff.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userEmail": { "type": "string", "format": "email", "maxLength": 180 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "category": { "type": "string", "enum": ["auth", "audio", "sync", "content", "bug", "other"] },
+        "subject": { "type": "string", "minLength": 4, "maxLength": 160 },
+        "description": { "type": "string", "minLength": 10, "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["open", "in_progress", "resolved"] },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+        "assignedTo": { "type": "string", "maxLength": 180 },
+        "resolutionNote": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId",
+        "userEmail",
+        "userName",
+        "category",
+        "subject",
+        "description",
+        "status",
+        "priority",
+        "assignedTo",
+        "resolutionNote",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable editorial and administrative edit log.",
+      "type": "object",
+      "properties": {
+        "actorUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorEmail": { "type": "string", "maxLength": 180 },
+        "actorRole": { "type": "string", "enum": ["admin", "editor", "reviewer", "security"] },
+        "action": { "type": "string", "maxLength": 80 },
+        "targetType": { "type": "string", "maxLength": 60 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "summary": { "type": "string", "maxLength": 400 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorUid", "actorEmail", "actorRole", "action", "targetType", "targetId", "summary", "createdAt"]
+    },
+    "SourceRight": {
+      "title": "SourceRight",
+      "description": "Source provenance, statutory citation, and copyright/public-domain licensing record.",
+      "type": "object",
+      "properties": {
+        "bookId": { "type": "string", "maxLength": 128 },
+        "bookTitle": { "type": "string", "maxLength": 160 },
+        "sourceName": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "licenseType": { "type": "string", "maxLength": 120 },
+        "jurisdiction": { "type": "string", "maxLength": 120 },
+        "citationUrl": { "type": "string", "maxLength": 500 },
+        "verified": { "type": "boolean" },
+        "updatedBy": { "type": "string", "maxLength": 180 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["bookId", "bookTitle", "sourceName", "licenseType", "jurisdiction", "citationUrl", "verified", "updatedBy", "createdAt", "updatedAt"]
+    },
+    "SystemSetting": {
+      "title": "SystemSetting",
+      "description": "Platform publish workflow, moderation, and import configuration.",
+      "type": "object",
+      "properties": {
+        "requireReviewBeforePublish": { "type": "boolean" },
+        "strictCommunityModeration": { "type": "boolean" },
+        "allowCsvImport": { "type": "boolean" },
+        "allowJsonImport": { "type": "boolean" },
+        "allowExcelImport": { "type": "boolean" },
+        "defaultLanguage": { "type": "string", "enum": ["en", "te", "hi", "es", "fr", "ar"] },
+        "updatedBy": { "type": "string", "maxLength": 180 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "requireReviewBeforePublish",
+        "strictCommunityModeration",
+        "allowCsvImport",
+        "allowJsonImport",
+        "allowExcelImport",
+        "defaultLanguage",
+        "updatedBy",
+        "updatedAt"
+      ]
+    },
+    "ContentAudioMetadata": {
+      "title": "ContentAudioMetadata",
+      "description": "Manual audio file metadata stored in Firestore and strictly linked 1-to-1 to a book overview, chapter, article, section, topic, or clause content node.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "contentSource": { "type": "string", "enum": ["books_structures", "cms_books", "ott_catalog"] },
+        "bookId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bookTitle": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "editionId": { "type": "string", "maxLength": 128 },
+        "chapterId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "chapterTitle": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "contentNodeId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "contentNodeType": { "type": "string", "enum": ["article", "section", "topic", "clause", "chapter", "edition"] },
+        "contentNodeNumber": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "contentNodeTitle": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "blockRole": { "type": "string", "enum": ["full", "text", "definition", "purpose", "explanation", "example"] },
+        "language": { "type": "string", "enum": ["en", "te", "kn", "ta", "ml", "hi", "es", "fr", "ar"] },
+        "narrator": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "fileName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "mimeType": {
+          "type": "string",
+          "enum": ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/ogg", "audio/mp4", "audio/aac", "audio/webm"]
+        },
+        "byteSize": { "type": "number" },
+        "durationSec": { "type": "number" },
+        "durationLabel": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "audioUrl": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "assetId": { "type": "string", "maxLength": 128 },
+        "sha256Checksum": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["draft", "pending_review", "published"] },
+        "uploadedByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uploadedByEmail": { "type": "string", "maxLength": 180 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "contentSource",
+        "bookId",
+        "bookTitle",
+        "editionId",
+        "chapterId",
+        "chapterTitle",
+        "contentNodeId",
+        "contentNodeType",
+        "contentNodeNumber",
+        "contentNodeTitle",
+        "blockRole",
+        "language",
+        "narrator",
+        "fileName",
+        "mimeType",
+        "byteSize",
+        "durationSec",
+        "durationLabel",
+        "audioUrl",
+        "assetId",
+        "sha256Checksum",
+        "status",
+        "uploadedByUid",
+        "uploadedByEmail",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user profile and study progress synced per authenticated UID."
+    },
+    "/users/{userId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/UserNote" },
+      "description": "User's private legal study notes."
+    },
+    "/users/{userId}/annotations/{annotationId}": {
+      "schema": { "$ref": "#/entities/UserAnnotation" },
+      "description": "User's private highlights and bookmarks."
+    },
+    "/users/{userId}/customBooks/{bookId}": {
+      "schema": { "$ref": "#/entities/CustomLawBook" },
+      "description": "Legacy user custom books subcollection."
+    },
+    "/staffRoles/{uid}": {
+      "schema": { "$ref": "#/entities/StaffRole" },
+      "description": "Trusted RBAC role registry (admin, editor, reviewer, security)."
+    },
+    "/userDirectory/{uid}": {
+      "schema": { "$ref": "#/entities/UserDirectoryEntry" },
+      "description": "Google account login monitoring directory for Admin and Security roles."
+    },
+    "/cmsBooks/{bookId}": {
+      "schema": { "$ref": "#/entities/CmsBook" },
+      "description": "Editorial books, chapters, verses/clauses, meanings, and publication status."
+    },
+    "/audioTracks/{trackId}": {
+      "schema": { "$ref": "#/entities/AudioTrack" },
+      "description": "Audio narration library linked to chapters and languages."
+    },
+    "/contentAudioMetadata/{audioId}": {
+      "schema": { "$ref": "#/entities/ContentAudioMetadata" },
+      "description": "Per-article and per-section audio metadata linked directly to its corresponding content node."
+    },
+    "/communityPosts/{postId}": {
+      "schema": { "$ref": "#/entities/CommunityPost" },
+      "description": "Moderated text-only community feed posts."
+    },
+    "/supportTickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/SupportTicket" },
+      "description": "User technical support tickets handled by Security and Admin roles."
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable audit log of editorial and admin operations."
+    },
+    "/sourcesRights/{sourceId}": {
+      "schema": { "$ref": "#/entities/SourceRight" },
+      "description": "Book legal provenance, attribution, and licensing records."
+    },
+    "/systemSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/SystemSetting" },
+      "description": "Global CMS workflow and moderation settings."
+    }
+  }
+}

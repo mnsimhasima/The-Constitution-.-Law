@@ -1,0 +1,974 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable Hardened Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidStringList(arr, maxLen) {
+      return arr is list
+        && arr.size() <= maxLen
+        && (arr.size() == 0 || (arr[0] is string && arr[0].size() <= 128));
+    }
+
+    // Bootstrapped Admin (Verified email check — zero DB read, immune to email spoofing)
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'mnsimhasima@gmail.com';
+    }
+
+    // Server-Trusted Role Lookup Helpers (Single-document operations)
+    function hasStaffRole(targetRole) {
+      return isVerifiedUser()
+        && exists(/databases/$(database)/documents/staffRoles/$(request.auth.uid))
+        && get(/databases/$(database)/documents/staffRoles/$(request.auth.uid)).data.active == true
+        && get(/databases/$(database)/documents/staffRoles/$(request.auth.uid)).data.role == targetRole;
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || hasStaffRole('admin');
+    }
+
+    function isEditor() {
+      return hasStaffRole('editor');
+    }
+
+    function isReviewer() {
+      return hasStaffRole('reviewer');
+    }
+
+    function isSecurity() {
+      return hasStaffRole('security');
+    }
+
+    function isStaff() {
+      return isAdmin() || isEditor() || isReviewer() || isSecurity();
+    }
+
+    // =========================================================================
+    // Entity Validation Blueprints (Pillar 2 — Anti-Update-Gap)
+    // =========================================================================
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'displayName',
+          'email',
+          'photoURL',
+          'preferredLanguage',
+          'streakDays',
+          'audioMinutes',
+          'startedPlanIds',
+          'completedPlanDayIds',
+          'readChapterIds',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'email',
+          'photoURL',
+          'preferredLanguage',
+          'streakDays',
+          'audioMinutes',
+          'startedPlanIds',
+          'completedPlanDayIds',
+          'readChapterIds',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && isValidId(data.uid)
+        && data.displayName is string
+        && data.displayName.size() <= 120
+        && data.email is string
+        && data.email.size() <= 180
+        && data.photoURL is string
+        && data.photoURL.size() <= 500
+        && data.preferredLanguage in ['en', 'te', 'hi', 'es', 'fr', 'ar']
+        && data.streakDays is number
+        && data.streakDays >= 0
+        && data.streakDays <= 10000
+        && data.audioMinutes is number
+        && data.audioMinutes >= 0
+        && data.audioMinutes <= 1000000
+        && isValidStringList(data.startedPlanIds, 30)
+        && isValidStringList(data.completedPlanDayIds, 100)
+        && isValidStringList(data.readChapterIds, 100)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserNote(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'clauseKey',
+          'bookId',
+          'chapterId',
+          'clauseId',
+          'content',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'clauseKey',
+          'bookId',
+          'chapterId',
+          'clauseId',
+          'content',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.ownerId is string
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && isValidId(data.ownerId)
+        && data.clauseKey is string
+        && data.clauseKey.size() >= 1
+        && data.clauseKey.size() <= 160
+        && data.bookId is string
+        && data.bookId.size() >= 1
+        && data.bookId.size() <= 80
+        && data.chapterId is string
+        && data.chapterId.size() >= 1
+        && data.chapterId.size() <= 80
+        && data.clauseId is string
+        && data.clauseId.size() >= 1
+        && data.clauseId.size() <= 80
+        && data.content is string
+        && data.content.size() >= 1
+        && data.content.size() <= 2000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserAnnotation(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'clauseKey',
+          'bookId',
+          'chapterId',
+          'clauseId',
+          'kind',
+          'color',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'clauseKey',
+          'bookId',
+          'chapterId',
+          'clauseId',
+          'kind',
+          'color',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.ownerId is string
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && isValidId(data.ownerId)
+        && data.clauseKey is string
+        && data.clauseKey.size() >= 1
+        && data.clauseKey.size() <= 160
+        && data.bookId is string
+        && data.bookId.size() >= 1
+        && data.bookId.size() <= 80
+        && data.chapterId is string
+        && data.chapterId.size() >= 1
+        && data.chapterId.size() <= 80
+        && data.clauseId is string
+        && data.clauseId.size() >= 1
+        && data.clauseId.size() <= 80
+        && data.kind in ['highlight', 'bookmark']
+        && data.color in ['none', 'amber', 'sage', 'sky', 'rose', 'lilac']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCustomLawBook(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'shortTitle',
+          'titleEn',
+          'jurisdiction',
+          'year',
+          'category',
+          'chapterTitleEn',
+          'clauseNumber',
+          'principleEn',
+          'clauseTextEn',
+          'explanationEn',
+          'clauseTextTe',
+          'explanationTe',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'shortTitle',
+          'titleEn',
+          'jurisdiction',
+          'year',
+          'category',
+          'chapterTitleEn',
+          'clauseNumber',
+          'principleEn',
+          'clauseTextEn',
+          'explanationEn',
+          'clauseTextTe',
+          'explanationTe',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.ownerId is string
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && isValidId(data.ownerId)
+        && data.shortTitle is string
+        && data.shortTitle.size() >= 1
+        && data.shortTitle.size() <= 80
+        && data.titleEn is string
+        && data.titleEn.size() >= 3
+        && data.titleEn.size() <= 160
+        && data.jurisdiction is string
+        && data.jurisdiction.size() >= 2
+        && data.jurisdiction.size() <= 120
+        && data.year is string
+        && data.year.size() <= 32
+        && data.category in ['constitutions', 'international', 'statutory', 'history', 'custom']
+        && data.chapterTitleEn is string
+        && data.chapterTitleEn.size() >= 2
+        && data.chapterTitleEn.size() <= 160
+        && data.clauseNumber is string
+        && data.clauseNumber.size() >= 1
+        && data.clauseNumber.size() <= 60
+        && data.principleEn is string
+        && data.principleEn.size() <= 120
+        && data.clauseTextEn is string
+        && data.clauseTextEn.size() >= 15
+        && data.clauseTextEn.size() <= 4000
+        && data.explanationEn is string
+        && data.explanationEn.size() >= 15
+        && data.explanationEn.size() <= 4000
+        && data.clauseTextTe is string
+        && data.clauseTextTe.size() <= 4000
+        && data.explanationTe is string
+        && data.explanationTe.size() <= 4000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStaffRole(data, targetUid) {
+      return data.keys().hasAll([
+          'uid', 'email', 'displayName', 'role', 'assignedBy', 'active', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'role', 'assignedBy', 'active', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == targetUid
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 180
+        && data.displayName is string && data.displayName.size() <= 120
+        && data.role in ['admin', 'editor', 'reviewer', 'security']
+        && data.assignedBy is string && data.assignedBy.size() <= 180
+        && data.active is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserDirectoryEntry(data, targetUid) {
+      return data.keys().hasAll([
+          'uid', 'displayName', 'email', 'photoURL', 'provider', 'role', 'status', 'lastLoginAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'email', 'photoURL', 'provider', 'role', 'status', 'lastLoginAt', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == targetUid
+        && isValidId(data.uid)
+        && data.displayName is string && data.displayName.size() <= 120
+        && data.email is string && data.email.size() <= 180
+        && data.photoURL is string && data.photoURL.size() <= 500
+        && data.provider is string && data.provider.size() <= 60
+        && data.role in ['user', 'admin', 'editor', 'reviewer', 'security']
+        && data.status in ['active', 'flagged', 'suspended']
+        && data.lastLoginAt is timestamp
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCmsBook(data, bookId) {
+      return data.keys().hasAll([
+          'id', 'shortTitle', 'title', 'subtitle', 'jurisdiction', 'year',
+          'category', 'coverTone', 'status', 'sourceAttribution', 'rightsLicense',
+          'chapters', 'createdByUid', 'createdByEmail', 'reviewedByEmail', 'reviewNotes',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'shortTitle', 'title', 'subtitle', 'jurisdiction', 'year',
+          'category', 'coverTone', 'status', 'sourceAttribution', 'rightsLicense',
+          'chapters', 'createdByUid', 'createdByEmail', 'reviewedByEmail', 'reviewNotes',
+          'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == bookId && isValidId(data.id)
+        && data.shortTitle is string && data.shortTitle.size() >= 2 && data.shortTitle.size() <= 80
+        && data.title is map && data.title.en is string && data.title.en.size() >= 2 && data.title.en.size() <= 200
+        && data.subtitle is map && data.subtitle.en is string && data.subtitle.en.size() <= 400
+        && data.jurisdiction is string && data.jurisdiction.size() >= 2 && data.jurisdiction.size() <= 120
+        && data.year is string && data.year.size() <= 32
+        && data.category in ['constitutions', 'history', 'statutory', 'international']
+        && data.coverTone in ['cobalt', 'sapphire', 'slate', 'emerald', 'amber', 'obsidian']
+        && data.status in ['draft', 'pending_review', 'published', 'changes_requested']
+        && data.sourceAttribution is string && data.sourceAttribution.size() <= 300
+        && data.rightsLicense is string && data.rightsLicense.size() <= 160
+        && data.chapters is list && data.chapters.size() <= 40
+        && (data.chapters.size() == 0 || data.chapters[0] is map)
+        && data.createdByUid is string && isValidId(data.createdByUid)
+        && data.createdByEmail is string && data.createdByEmail.size() <= 180
+        && data.reviewedByEmail is string && data.reviewedByEmail.size() <= 180
+        && data.reviewNotes is string && data.reviewNotes.size() <= 1000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAudioTrack(data, trackId) {
+      return data.keys().hasAll([
+          'id', 'bookId', 'bookTitle', 'chapterId', 'chapterTitle', 'language',
+          'narrator', 'durationLabel', 'audioUrl', 'status', 'uploadedByUid',
+          'uploadedByEmail', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'bookId', 'bookTitle', 'chapterId', 'chapterTitle', 'language',
+          'narrator', 'durationLabel', 'audioUrl', 'status', 'uploadedByUid',
+          'uploadedByEmail', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == trackId && isValidId(data.id)
+        && data.bookId is string && data.bookId.size() >= 1 && data.bookId.size() <= 128
+        && data.bookTitle is string && data.bookTitle.size() >= 1 && data.bookTitle.size() <= 160
+        && data.chapterId is string && data.chapterId.size() >= 1 && data.chapterId.size() <= 128
+        && data.chapterTitle is string && data.chapterTitle.size() >= 1 && data.chapterTitle.size() <= 160
+        && data.language in ['en', 'te', 'hi', 'es', 'fr', 'ar']
+        && data.narrator is string && data.narrator.size() >= 1 && data.narrator.size() <= 120
+        && data.durationLabel is string && data.durationLabel.size() >= 1 && data.durationLabel.size() <= 32
+        && data.audioUrl is string && data.audioUrl.size() <= 500
+        && data.status in ['draft', 'pending_review', 'published']
+        && data.uploadedByUid is string && isValidId(data.uploadedByUid)
+        && data.uploadedByEmail is string && data.uploadedByEmail.size() <= 180
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidContentAudioMetadata(data, audioId) {
+      return data.keys().hasAll([
+          'id', 'contentSource', 'bookId', 'bookTitle', 'editionId',
+          'chapterId', 'chapterTitle', 'contentNodeId', 'contentNodeType',
+          'contentNodeNumber', 'contentNodeTitle', 'blockRole', 'language',
+          'narrator', 'fileName', 'mimeType', 'byteSize', 'durationSec',
+          'durationLabel', 'audioUrl', 'assetId', 'sha256Checksum',
+          'status', 'uploadedByUid', 'uploadedByEmail', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'contentSource', 'bookId', 'bookTitle', 'editionId',
+          'chapterId', 'chapterTitle', 'contentNodeId', 'contentNodeType',
+          'contentNodeNumber', 'contentNodeTitle', 'blockRole', 'language',
+          'narrator', 'fileName', 'mimeType', 'byteSize', 'durationSec',
+          'durationLabel', 'audioUrl', 'assetId', 'sha256Checksum',
+          'status', 'uploadedByUid', 'uploadedByEmail', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == audioId && isValidId(data.id)
+        && data.contentSource in ['books_structures', 'cms_books', 'ott_catalog']
+        && data.bookId is string && data.bookId.size() >= 1 && data.bookId.size() <= 128
+        && data.bookTitle is string && data.bookTitle.size() >= 1 && data.bookTitle.size() <= 160
+        && data.editionId is string && data.editionId.size() <= 128
+        && data.chapterId is string && data.chapterId.size() >= 1 && data.chapterId.size() <= 128
+        && data.chapterTitle is string && data.chapterTitle.size() >= 1 && data.chapterTitle.size() <= 160
+        && data.contentNodeId is string && data.contentNodeId.size() >= 1 && data.contentNodeId.size() <= 128
+        && data.contentNodeType in ['article', 'section', 'topic', 'clause', 'chapter', 'edition']
+        && data.contentNodeNumber is string && data.contentNodeNumber.size() >= 1 && data.contentNodeNumber.size() <= 60
+        && data.contentNodeTitle is string && data.contentNodeTitle.size() >= 1 && data.contentNodeTitle.size() <= 160
+        && data.blockRole in ['full', 'text', 'definition', 'purpose', 'explanation', 'example']
+        && data.language in ['en', 'te', 'kn', 'ta', 'ml', 'hi', 'es', 'fr', 'ar']
+        && data.narrator is string && data.narrator.size() >= 1 && data.narrator.size() <= 120
+        && data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 200
+        && data.mimeType in ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm']
+        && data.byteSize is number && data.byteSize >= 1 && data.byteSize <= 10485760
+        && data.durationSec is number && data.durationSec >= 0 && data.durationSec <= 86400
+        && data.durationLabel is string && data.durationLabel.size() >= 1 && data.durationLabel.size() <= 32
+        && data.audioUrl is string && data.audioUrl.size() >= 1 && data.audioUrl.size() <= 500
+        && data.assetId is string && data.assetId.size() <= 128
+        && data.sha256Checksum is string && data.sha256Checksum.size() <= 128
+        && data.status in ['draft', 'pending_review', 'published']
+        && data.uploadedByUid is string && isValidId(data.uploadedByUid)
+        && data.uploadedByEmail is string && data.uploadedByEmail.size() <= 180
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCommunityPost(data) {
+      return data.keys().hasAll([
+          'authorId', 'authorName', 'authorHandle', 'authorInitials', 'authorTone',
+          'tag', 'content', 'bookId', 'chapterId', 'likesCount', 'moderationStatus',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'authorId', 'authorName', 'authorHandle', 'authorInitials', 'authorTone',
+          'tag', 'content', 'bookId', 'chapterId', 'likesCount', 'moderationStatus',
+          'createdAt', 'updatedAt'
+        ])
+        && data.authorId is string && isValidId(data.authorId)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 120
+        && data.authorHandle is string && data.authorHandle.size() >= 1 && data.authorHandle.size() <= 80
+        && data.authorInitials is string && data.authorInitials.size() >= 1 && data.authorInitials.size() <= 4
+        && data.authorTone is string && data.authorTone.size() <= 40
+        && data.tag is string && data.tag.size() >= 1 && data.tag.size() <= 60
+        && data.content is string && data.content.size() >= 8 && data.content.size() <= 1000
+        && data.bookId is string && data.bookId.size() <= 128
+        && data.chapterId is string && data.chapterId.size() <= 128
+        && data.likesCount is number && data.likesCount >= 0 && data.likesCount <= 1000000
+        && data.moderationStatus in ['approved', 'removed']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSupportTicket(data) {
+      return data.keys().hasAll([
+          'userId', 'userEmail', 'userName', 'category', 'subject', 'description',
+          'status', 'priority', 'assignedTo', 'resolutionNote', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'userEmail', 'userName', 'category', 'subject', 'description',
+          'status', 'priority', 'assignedTo', 'resolutionNote', 'createdAt', 'updatedAt'
+        ])
+        && data.userId is string && isValidId(data.userId)
+        && data.userEmail is string && data.userEmail.size() <= 180
+        && data.userName is string && data.userName.size() <= 120
+        && data.category in ['auth', 'audio', 'sync', 'content', 'bug', 'other']
+        && data.subject is string && data.subject.size() >= 4 && data.subject.size() <= 160
+        && data.description is string && data.description.size() >= 10 && data.description.size() <= 2000
+        && data.status in ['open', 'in_progress', 'resolved']
+        && data.priority in ['low', 'medium', 'high']
+        && data.assignedTo is string && data.assignedTo.size() <= 180
+        && data.resolutionNote is string && data.resolutionNote.size() <= 2000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll([
+          'actorUid', 'actorEmail', 'actorRole', 'action', 'targetType', 'targetId', 'summary', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'actorUid', 'actorEmail', 'actorRole', 'action', 'targetType', 'targetId', 'summary', 'createdAt'
+        ])
+        && data.actorUid is string && data.actorUid == request.auth.uid && isValidId(data.actorUid)
+        && data.actorEmail is string && data.actorEmail.size() <= 180
+        && data.actorRole in ['admin', 'editor', 'reviewer', 'security']
+        && data.action is string && data.action.size() >= 2 && data.action.size() <= 80
+        && data.targetType is string && data.targetType.size() >= 2 && data.targetType.size() <= 60
+        && data.targetId is string && data.targetId.size() >= 1 && data.targetId.size() <= 128
+        && data.summary is string && data.summary.size() >= 2 && data.summary.size() <= 400
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSourceRight(data) {
+      return data.keys().hasAll([
+          'bookId', 'bookTitle', 'sourceName', 'licenseType', 'jurisdiction',
+          'citationUrl', 'verified', 'updatedBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'bookId', 'bookTitle', 'sourceName', 'licenseType', 'jurisdiction',
+          'citationUrl', 'verified', 'updatedBy', 'createdAt', 'updatedAt'
+        ])
+        && data.bookId is string && data.bookId.size() >= 1 && data.bookId.size() <= 128
+        && data.bookTitle is string && data.bookTitle.size() >= 1 && data.bookTitle.size() <= 160
+        && data.sourceName is string && data.sourceName.size() >= 2 && data.sourceName.size() <= 200
+        && data.licenseType is string && data.licenseType.size() >= 2 && data.licenseType.size() <= 120
+        && data.jurisdiction is string && data.jurisdiction.size() >= 2 && data.jurisdiction.size() <= 120
+        && data.citationUrl is string && data.citationUrl.size() <= 500
+        && data.verified is bool
+        && data.updatedBy is string && data.updatedBy.size() <= 180
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSystemSetting(data) {
+      return data.keys().hasAll([
+          'requireReviewBeforePublish', 'strictCommunityModeration', 'allowCsvImport',
+          'allowJsonImport', 'allowExcelImport', 'defaultLanguage', 'updatedBy', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'requireReviewBeforePublish', 'strictCommunityModeration', 'allowCsvImport',
+          'allowJsonImport', 'allowExcelImport', 'defaultLanguage', 'updatedBy', 'updatedAt'
+        ])
+        && data.requireReviewBeforePublish is bool
+        && data.strictCommunityModeration is bool
+        && data.allowCsvImport is bool
+        && data.allowJsonImport is bool
+        && data.allowExcelImport is bool
+        && data.defaultLanguage in ['en', 'te', 'hi', 'es', 'fr', 'ar']
+        && data.updatedBy is string && data.updatedBy.size() <= 180
+        && data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // 1. Users Collection (Strict PII Isolation)
+    // =========================================================================
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if false;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'email', 'photoURL', 'preferredLanguage',
+          'streakDays', 'audioMinutes', 'startedPlanIds',
+          'completedPlanDayIds', 'readChapterIds', 'updatedAt'
+        ]);
+      allow delete: if isValidId(userId) && (isOwner(userId) || isAdmin());
+
+      match /notes/{noteId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(noteId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId) && isValidId(noteId)
+          && isValidUserNote(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isOwner(userId)
+          && isValidId(userId) && isValidId(noteId)
+          && isValidUserNote(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'updatedAt'])
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(noteId);
+      }
+
+      match /annotations/{annotationId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(annotationId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId) && isValidId(annotationId)
+          && isValidUserAnnotation(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isOwner(userId)
+          && isValidId(userId) && isValidId(annotationId)
+          && isValidUserAnnotation(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['color', 'updatedAt'])
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(annotationId);
+      }
+
+      match /customBooks/{bookId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(bookId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(userId) && isValidId(bookId)
+          && isValidCustomLawBook(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow update: if isOwner(userId)
+          && isValidId(userId) && isValidId(bookId)
+          && isValidCustomLawBook(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'shortTitle', 'titleEn', 'jurisdiction', 'year', 'category',
+            'chapterTitleEn', 'clauseNumber', 'principleEn', 'clauseTextEn',
+            'explanationEn', 'clauseTextTe', 'explanationTe', 'updatedAt'
+          ])
+          && exists(/databases/$(database)/documents/users/$(userId));
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(bookId);
+      }
+    }
+
+    // =========================================================================
+    // 2. Staff Roles Collection (RBAC Source of Truth)
+    // =========================================================================
+    match /staffRoles/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isAdmin() || isSecurity());
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(uid)
+        && isValidStaffRole(incoming(), uid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isValidId(uid)
+        && isValidStaffRole(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'email', 'displayName', 'role', 'assignedBy', 'active', 'updatedAt'
+        ])
+        && isAdmin();
+      allow delete: if isValidId(uid) && isAdmin();
+    }
+
+    // =========================================================================
+    // 3. User Directory (Google Login Monitor — Admin & Security)
+    // =========================================================================
+    match /userDirectory/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isAdmin() || isSecurity());
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(uid)
+        && isValidUserDirectoryEntry(incoming(), uid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && incoming().lastLoginAt == request.time
+        && (
+          (isOwner(uid) && incoming().role == 'user' && incoming().status == 'active')
+          || isAdmin()
+        );
+      allow update: if isValidId(uid)
+        && isValidUserDirectoryEntry(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Tier 1: Admin can update role, status, or metadata
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName', 'email', 'photoURL', 'provider', 'role', 'status', 'lastLoginAt', 'updatedAt'
+          ]))
+          ||
+          // Tier 2: Security can flag/suspend accounts
+          (isSecurity() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          ||
+          // Tier 3: User can only refresh own profile & login timestamp (NEVER role or status)
+          (isOwner(uid)
+            && incoming().role == existing().role
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'email', 'photoURL', 'provider', 'lastLoginAt', 'updatedAt'
+            ]))
+        );
+      allow delete: if isValidId(uid) && isAdmin();
+    }
+
+    // =========================================================================
+    // 4. CMS Books & Structures (Admin / Editor / Reviewer Workflow)
+    // =========================================================================
+    match /cmsBooks/{bookId} {
+      allow get: if isValidId(bookId) && (resource.data.status == 'published' || isStaff());
+      allow list: if resource.data.status == 'published' || (isVerifiedUser() && resource.data.createdByUid == request.auth.uid) || isBootstrappedAdmin();
+      allow create: if isValidId(bookId)
+        && isValidCmsBook(incoming(), bookId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (isEditor() && incoming().status in ['draft', 'pending_review'])
+        );
+      allow update: if isValidId(bookId)
+        && isValidCmsBook(incoming(), bookId)
+        && incoming().id == existing().id
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Tier 1: Admin has full editorial & publish control
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'shortTitle', 'title', 'subtitle', 'jurisdiction', 'year',
+            'category', 'coverTone', 'status', 'sourceAttribution', 'rightsLicense',
+            'chapters', 'reviewedByEmail', 'reviewNotes', 'updatedAt'
+          ]))
+          ||
+          // Tier 2: Editor can edit content & submit for review (cannot publish directly)
+          (isEditor()
+            && incoming().status in ['draft', 'pending_review']
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'shortTitle', 'title', 'subtitle', 'jurisdiction', 'year',
+              'category', 'coverTone', 'status', 'sourceAttribution', 'rightsLicense',
+              'chapters', 'updatedAt'
+            ]))
+          ||
+          // Tier 3: Reviewer can approve/publish or request changes only
+          (isReviewer()
+            && incoming().status in ['published', 'changes_requested']
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'reviewedByEmail', 'reviewNotes', 'updatedAt'
+            ]))
+        );
+      allow delete: if isValidId(bookId) && isAdmin();
+    }
+
+    // =========================================================================
+    // 5. Audio Library Tracks
+    // =========================================================================
+    match /audioTracks/{trackId} {
+      allow get: if isValidId(trackId) && (resource.data.status == 'published' || isStaff());
+      allow list: if resource.data.status == 'published' || (isVerifiedUser() && resource.data.uploadedByUid == request.auth.uid) || isBootstrappedAdmin();
+      allow create: if isValidId(trackId)
+        && isValidAudioTrack(incoming(), trackId)
+        && incoming().uploadedByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (isEditor() && incoming().status in ['draft', 'pending_review'])
+        );
+      allow update: if isValidId(trackId)
+        && isValidAudioTrack(incoming(), trackId)
+        && incoming().id == existing().id
+        && incoming().uploadedByUid == existing().uploadedByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'bookId', 'bookTitle', 'chapterId', 'chapterTitle', 'language',
+            'narrator', 'durationLabel', 'audioUrl', 'status', 'updatedAt'
+          ]))
+          ||
+          (isEditor()
+            && incoming().status in ['draft', 'pending_review']
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'bookId', 'bookTitle', 'chapterId', 'chapterTitle', 'language',
+              'narrator', 'durationLabel', 'audioUrl', 'status', 'updatedAt'
+            ]))
+          ||
+          (isReviewer()
+            && incoming().status in ['published', 'draft']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+        );
+      allow delete: if isValidId(trackId) && isAdmin();
+    }
+
+    // =========================================================================
+    // 5B. Per-Article & Per-Section Content Audio Metadata
+    // =========================================================================
+    match /contentAudioMetadata/{audioId} {
+      allow get: if isValidId(audioId) && (resource.data.status == 'published' || isStaff());
+      allow list: if resource.data.status == 'published'
+        || (isVerifiedUser() && resource.data.uploadedByUid == request.auth.uid)
+        || isBootstrappedAdmin();
+      allow create: if isValidId(audioId)
+        && isValidContentAudioMetadata(incoming(), audioId)
+        && incoming().uploadedByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (isEditor() && incoming().status in ['draft', 'pending_review'])
+        );
+      allow update: if isValidId(audioId)
+        && isValidContentAudioMetadata(incoming(), audioId)
+        && incoming().id == existing().id
+        && incoming().uploadedByUid == existing().uploadedByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Tier 1: Admin has full editorial and publish control
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'contentSource', 'bookId', 'bookTitle', 'editionId',
+            'chapterId', 'chapterTitle', 'contentNodeId', 'contentNodeType',
+            'contentNodeNumber', 'contentNodeTitle', 'blockRole', 'language',
+            'narrator', 'fileName', 'mimeType', 'byteSize', 'durationSec',
+            'durationLabel', 'audioUrl', 'assetId', 'sha256Checksum',
+            'status', 'updatedAt'
+          ]))
+          ||
+          // Tier 2: Editor can update metadata & submit for review (cannot publish directly)
+          (isEditor()
+            && incoming().status in ['draft', 'pending_review']
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'contentSource', 'bookId', 'bookTitle', 'editionId',
+              'chapterId', 'chapterTitle', 'contentNodeId', 'contentNodeType',
+              'contentNodeNumber', 'contentNodeTitle', 'blockRole', 'language',
+              'narrator', 'fileName', 'mimeType', 'byteSize', 'durationSec',
+              'durationLabel', 'audioUrl', 'assetId', 'sha256Checksum',
+              'status', 'updatedAt'
+            ]))
+          ||
+          // Tier 3: Reviewer can only approve/publish or send back to draft
+          (isReviewer()
+            && incoming().status in ['published', 'draft']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+        );
+      allow delete: if isValidId(audioId)
+        && (
+          isAdmin()
+          || (isEditor() && existing().uploadedByUid == request.auth.uid && existing().status != 'published')
+        );
+    }
+
+    // =========================================================================
+    // 6. Community Posts (Text-Only Moderated Social Feed)
+    // =========================================================================
+    match /communityPosts/{postId} {
+      allow get: if isValidId(postId) && (resource.data.moderationStatus == 'approved' || isAdmin() || isSecurity());
+      allow list: if resource.data.moderationStatus == 'approved' || isBootstrappedAdmin();
+      allow create: if isVerifiedUser()
+        && isValidId(postId)
+        && isValidCommunityPost(incoming())
+        && incoming().authorId == request.auth.uid
+        && incoming().likesCount == 0
+        && incoming().moderationStatus == 'approved'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(postId)
+        && isValidCommunityPost(incoming())
+        && incoming().authorId == existing().authorId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Admin or Security moderation
+          ((isAdmin() || isSecurity())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['moderationStatus', 'updatedAt']))
+          ||
+          // Action 2: Authenticated user likes/unlikes (+1 or -1)
+          (existing().moderationStatus == 'approved'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'updatedAt'])
+            && (incoming().likesCount == existing().likesCount + 1
+              || incoming().likesCount == existing().likesCount - 1))
+        );
+      allow delete: if isValidId(postId) && (isOwner(existing().authorId) || isAdmin() || isSecurity());
+    }
+
+    // =========================================================================
+    // 7. Support Tickets (User Technical Issues -> Security & Admin Desk)
+    // =========================================================================
+    match /supportTickets/{ticketId} {
+      allow get: if isValidId(ticketId) && (isOwner(existing().userId) || isAdmin() || isSecurity());
+      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isBootstrappedAdmin());
+      allow create: if isVerifiedUser()
+        && isValidId(ticketId)
+        && isValidSupportTicket(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().assignedTo == ''
+        && incoming().resolutionNote == ''
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(ticketId)
+        && isValidSupportTicket(incoming())
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (isAdmin() || isSecurity())
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'priority', 'assignedTo', 'resolutionNote', 'updatedAt'
+        ]);
+      allow delete: if isValidId(ticketId) && isAdmin();
+    }
+
+    // =========================================================================
+    // 8. Edit Log / Audit Trail (Immutable)
+    // =========================================================================
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && isStaff();
+      allow list: if (isVerifiedUser() && resource.data.actorUid == request.auth.uid) || isBootstrappedAdmin();
+      allow create: if isValidId(logId)
+        && isValidAuditLog(incoming())
+        && incoming().createdAt == request.time
+        && isStaff();
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // 9. Sources & Rights Registry
+    // =========================================================================
+    match /sourcesRights/{sourceId} {
+      allow get: if isValidId(sourceId) && (resource.data.verified == true || isStaff());
+      allow list: if resource.data.verified == true || isBootstrappedAdmin();
+      allow create: if isValidId(sourceId)
+        && isValidSourceRight(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (isAdmin() || isEditor());
+      allow update: if isValidId(sourceId)
+        && isValidSourceRight(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'bookId', 'bookTitle', 'sourceName', 'licenseType', 'jurisdiction',
+            'citationUrl', 'verified', 'updatedBy', 'updatedAt'
+          ]))
+          ||
+          (isEditor() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'bookId', 'bookTitle', 'sourceName', 'licenseType', 'jurisdiction',
+            'citationUrl', 'updatedBy', 'updatedAt'
+          ]))
+          ||
+          (isReviewer() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'verified', 'updatedBy', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(sourceId) && isAdmin();
+    }
+
+    // =========================================================================
+    // 10. System Settings (Admin-Only Writes)
+    // =========================================================================
+    match /systemSettings/{settingId} {
+      allow get: if isValidId(settingId) && isStaff();
+      allow list: if false;
+      allow create: if isValidId(settingId)
+        && isValidSystemSetting(incoming())
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isValidId(settingId)
+        && isValidSystemSetting(incoming())
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'requireReviewBeforePublish', 'strictCommunityModeration', 'allowCsvImport',
+          'allowJsonImport', 'allowExcelImport', 'defaultLanguage', 'updatedBy', 'updatedAt'
+        ])
+        && isAdmin();
+      allow delete: if false;
+    }
+  }
+}

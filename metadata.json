@@ -1,0 +1,6 @@
+{
+  "name": "The Constitution & Law",
+  "description": "Audible digital library of world constitutions and law books with plain-language explanations in multiple languages, study plans, highlights, and notes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
