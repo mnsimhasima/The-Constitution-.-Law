@@ -56,7 +56,6 @@ import type {
   ReaderTheme,
 } from '../types/library';
 import type { OttGlossaryTerm, OttMasterBookGlossaryResponse } from '../types/ott';
-import { STUDIO_VOICES } from '../utils/audioTtsClient';
 import {
   CHAPTER_AUDIO_SPEED_STEP,
   CHAPTER_SPEED_PRESETS,
@@ -301,7 +300,7 @@ export function ReaderView({
       bookTitle: activeBook.title.en || activeBook.shortTitle,
     });
 
-    fetch(`/api/ott/master-books/glossary?${params.toString()}`, {
+    fetch(`/api/books-structures/glossary?${params.toString()}`, {
       signal: controller.signal,
     })
       .then((res) => (res.ok ? res.json() : null))
@@ -1071,37 +1070,14 @@ export function ReaderView({
               </div>
             </div>
 
-            {onChangeAudioVoice && (
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                  Studio Voice ({activeLangName})
-                </p>
-                <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-5">
-                  {STUDIO_VOICES.map((voice) => {
-                    const active = audioVoice === voice.id;
-                    return (
-                      <button
-                        key={voice.id}
-                        type="button"
-                        onClick={() => onChangeAudioVoice(voice.id)}
-                        className={`rounded-xl border px-2.5 py-2 text-left transition cursor-pointer ${
-                          active
-                            ? 'border-[#2563EB] bg-blue-50/80 dark:border-blue-500 dark:bg-blue-500/15'
-                            : 'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-[#0D111A]'
-                        }`}
-                      >
-                        <p className="text-xs font-bold text-slate-950 dark:text-white">
-                          {voice.label}
-                        </p>
-                        <p className="mt-0.5 line-clamp-1 text-[10px] text-slate-500 dark:text-slate-400">
-                          {voice.description}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            <div className="rounded-xl border border-blue-200/80 bg-blue-50/60 px-3.5 py-2.5 text-xs text-slate-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-slate-200">
+              <p className="font-bold text-slate-900 dark:text-white">
+                Native 1-to-1 Uploaded Audio ({activeLangName})
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-600 dark:text-slate-300">
+                Plays manually uploaded audio files attached directly to each chapter, article, section, or topic in Books &amp; Structures CMS.
+              </p>
+            </div>
 
             {/* Granular Chapter-Specific Playback Speed (0.5x – 2.0x) */}
             <div

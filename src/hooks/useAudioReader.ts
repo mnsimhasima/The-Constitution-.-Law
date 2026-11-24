@@ -15,23 +15,11 @@ import {
   resolveBookDisplayTitle,
   type AudioQueueState,
 } from '../utils/audioQueueController';
-import { fetchTtsAudioClipUrl, prefetchTtsAudioClip } from '../utils/audioTtsClient';
+import {
+  prefetchManualAudioClip,
+  resolveManualAudioClipUrl,
+} from '../utils/manualAudioClient';
 import { resolveEffectivePlaybackSpeed } from '../utils/chapterAudioSpeed';
-
-const VOICE_STORAGE_KEY = 'constitution_law_audio_voice_v1';
-
-function loadSavedVoice(): AudioVoiceName {
-  if (typeof window === 'undefined') return 'Kore';
-  try {
-    const raw = window.localStorage.getItem(VOICE_STORAGE_KEY);
-    if (raw === 'Kore' || raw === 'Charon' || raw === 'Puck' || raw === 'Fenrir' || raw === 'Zephyr') {
-      return raw;
-    }
-  } catch {
-    // Ignore storage access issues
-  }
-  return 'Kore';
-}
 
 export type AudioPlayerState = AudioQueueState;
 
@@ -62,7 +50,7 @@ export function useAudioReader({
     ...INITIAL_AUDIO_QUEUE_STATE,
     autoAdvance,
   });
-  const [voiceName, setVoiceNameState] = useState<AudioVoiceName>(() => loadSavedVoice());
+  const [voiceName, setVoiceNameState] = useState<AudioVoiceName>('manual');
 
   const activeBookRef = useRef<LawBook | null>(null);
   const activeChapterRef = useRef<Chapter | null>(null);
@@ -89,8 +77,6 @@ export function useAudioReader({
   speedRef.current = effectiveSpeed;
   const languageRef = useRef(language);
   languageRef.current = language;
-  const voiceRef = useRef(voiceName);
-  voiceRef.current = voiceName;
   const persistToIndexedDbRef = useRef(persistToIndexedDb);
   persistToIndexedDbRef.current = persistToIndexedDb;
   const onActiveClauseChangeRef = useRef(onActiveClauseChange);
@@ -107,11 +93,6 @@ export function useAudioReader({
 
   const setVoiceName = useCallback((nextVoice: AudioVoiceName) => {
     setVoiceNameState(nextVoice);
-    try {
-      window.localStorage.setItem(VOICE_STORAGE_KEY, nextVoice);
-    } catch {
-      // Ignore storage write errors
-    }
   }, []);
 
   const stopAudioElement = useCallback(() => {
@@ -154,7 +135,6 @@ export function useAudioReader({
     abortControllerRef.current = controller;
 
     const targetLang = languageRef.current;
-    const targetVoice = voiceRef.current;
 
     onActiveClauseChangeRef.current?.(segment.clauseId);
 
@@ -162,11 +142,19 @@ export function useAudioReader({
 
     const loadAndPlay = async () => {
       try {
+        if (!segment.audioUrl) {
+          dispatch({
+            type: 'CLIP_ERROR',
+            message:
+              'No manual audio file uploaded for this block yet. Upload an audio file in Books & Structures CMS.',
+          });
+          return;
+        }
+
         const shouldPersist = persistToIndexedDbRef.current;
-        const clipUrl = await fetchTtsAudioClipUrl(
-          segment.spokenText,
+        const clipUrl = await resolveManualAudioClipUrl(
+          segment.audioUrl,
           targetLang,
-          targetVoice,
           controller.signal,
           {
             persistToIndexedDb: shouldPersist,
@@ -244,8 +232,7 @@ export function useAudioReader({
           Number.isFinite(audioEl.duration) && audioEl.duration > 0 ? audioEl.duration : null;
         dispatch({ type: 'CLIP_PLAYING', durationSeconds: dur });
 
-        // Once the active clip is confirmed playing, gently warm the single next item in the queue
-        // after a short settle delay so rapid manual stepping never triggers parallel TTS bursts.
+        // Once active clip is confirmed playing, warm the single next uploaded audio clip in the queue
         if (stateRef.current.autoAdvance) {
           window.setTimeout(() => {
             if (cancelled || myToken !== playbackTokenRef.current) return;
@@ -253,7 +240,7 @@ export function useAudioReader({
             if (!latest.isPlaying || !latest.autoAdvance) return;
             const upcoming = getLookaheadPrefetchSegments(latest.queue, latest.currentIndex, 1);
             for (const nextItem of upcoming) {
-              prefetchTtsAudioClip(nextItem.spokenText, targetLang, targetVoice, {
+              prefetchManualAudioClip(nextItem.audioUrl, targetLang, {
                 persistToIndexedDb: persistToIndexedDbRef.current,
                 bookId: latest.bookId ?? undefined,
                 chapterId: latest.chapterId ?? undefined,

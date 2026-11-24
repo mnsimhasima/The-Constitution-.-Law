@@ -83,10 +83,10 @@ export function LibraryView({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-400">
-            Audible OTT Digital Library · Multi-Language Editions
+            Books &amp; Structures · Multi-Language Editions &amp; Native Audio
           </p>
           <h1 className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-3xl">
-            Constitutions, Law &amp; History Library
+            Constitutions, Law &amp; Biography Library
           </h1>
         </div>
 
@@ -107,8 +107,8 @@ export function LibraryView({
             }`}
           >
             <Globe className="h-3.5 w-3.5 shrink-0" />
-            <span className="sm:hidden">OTT &amp; Offline</span>
-            <span className="hidden sm:inline">OTT Editions &amp; Offline Sync</span>
+            <span className="sm:hidden">Books &amp; Audio</span>
+            <span className="hidden sm:inline">Books &amp; Structures</span>
           </button>
           <button
             type="button"

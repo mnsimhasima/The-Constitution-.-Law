@@ -191,7 +191,7 @@ export function SettingsModal({
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                   {user
-                    ? `Connected to Firestore (${cloudSyncState}). Your highlights, notes, bookmarks, and custom books sync automatically.`
+                    ? `Connected to Supabase PostgreSQL (${cloudSyncState}). Your highlights, notes, bookmarks, and custom books sync automatically.`
                     : 'Currently running offline-first on this browser. Sign in with Google to back up your study vault.'}
                 </p>
               </div>

@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { LawBook } from '../types/library.ts';
 import type {
+  ContentNode,
+  ContentNodeType,
   OttAudioAsset,
   OttAudioBlockRole,
   OttAudioEntityType,
@@ -27,6 +29,13 @@ import type {
 } from '../types/ott.ts';
 import { buildSeededGlossaryForMasterBook } from './ottGlossarySeed.ts';
 import { buildDemoAudioUrl, createSeededOttCatalogData } from './ottSeedData.ts';
+import { getSupabaseAdmin, isSupabaseConfigured } from './supabaseClient.ts';
+import {
+  buildAudioS3Key,
+  downloadAudioFromSupabaseS3,
+  isSupabaseS3Configured,
+  uploadAudioToSupabaseS3,
+} from './supabaseS3.ts';
 
 export { buildDemoAudioUrl };
 
@@ -158,24 +167,328 @@ function migrateLegacyAudioUrl(url: string | undefined): string | undefined {
 
 export class OttCatalogStore {
   private readonly dbFilePath: string;
-  private readonly legacyDbFilePath: string;
+  private readonly legacyDbFilePath: string | null;
   private readonly audioDir: string;
+  private readonly customDbPathProvided: boolean;
+  private readonly customAudioDirProvided: boolean;
   private data: OttCatalogDatabase | null = null;
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(options?: { dbFilePath?: string; audioDir?: string }) {
+    this.customDbPathProvided = Boolean(options?.dbFilePath);
+    this.customAudioDirProvided = Boolean(options?.audioDir);
     this.dbFilePath =
       options?.dbFilePath ?? path.resolve(process.cwd(), 'data', 'books-structures.json');
-    this.legacyDbFilePath = path.resolve(process.cwd(), 'data', 'ott-catalog.json');
+    this.legacyDbFilePath = options?.dbFilePath
+      ? null
+      : path.resolve(process.cwd(), 'data', 'ott-catalog.json');
     this.audioDir = options?.audioDir ?? path.resolve(process.cwd(), '.ott-audio-uploads');
+  }
+
+  private shouldUseSupabaseDb(): boolean {
+    return !this.customDbPathProvided && isSupabaseConfigured();
+  }
+
+  private shouldUseSupabaseS3(): boolean {
+    return !this.customAudioDirProvided && isSupabaseS3Configured();
+  }
+
+  private async loadFromSupabase(): Promise<OttCatalogDatabase | null> {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return null;
+
+    const [mbRes, edRes, nodesRes, assetsRes] = await Promise.all([
+      supabase.from('master_books').select('*').order('created_at', { ascending: true }),
+      supabase.from('book_editions').select('*').order('created_at', { ascending: true }),
+      supabase.from('content_nodes').select('*').order('node_order', { ascending: true }),
+      supabase.from('audio_assets').select('*').order('created_at', { ascending: true }),
+    ]);
+
+    if (mbRes.error || edRes.error || nodesRes.error || assetsRes.error) {
+      throw new Error(
+        mbRes.error?.message ||
+          edRes.error?.message ||
+          nodesRes.error?.message ||
+          assetsRes.error?.message ||
+          'Supabase catalog load error'
+      );
+    }
+
+    if (!mbRes.data || mbRes.data.length === 0) {
+      return null;
+    }
+
+    const masterBooks: OttMasterBook[] = mbRes.data.map((r) => {
+      const base: OttMasterBook = {
+        id: r.id,
+        slug: r.slug,
+        bookType: normalizeBookType(r.book_type),
+        canonicalTitle: r.canonical_title,
+        jurisdiction: r.jurisdiction,
+        enactmentYear: r.enactment_year,
+        ...(r.cover_image_url ? { coverImageUrl: r.cover_image_url } : {}),
+        coverTone: r.cover_tone ?? 'cobalt',
+        glossaryTerms: Array.isArray(r.glossary_json) ? r.glossary_json : [],
+        versionNumber: Number(r.version_number ?? 1),
+        isDeleted: Boolean(r.is_deleted),
+        createdAt: String(r.created_at),
+        updatedAt: String(r.updated_at),
+      };
+      if (!base.glossaryTerms || base.glossaryTerms.length === 0) {
+        base.glossaryTerms = buildSeededGlossaryForMasterBook(base);
+      }
+      return base;
+    });
+
+    const editions: OttBookEdition[] = (edRes.data ?? []).map((r) => ({
+      id: r.id,
+      masterBookId: r.master_book_id,
+      languageCode: r.language_code,
+      languageName: r.language_name,
+      nativeLanguageName: r.native_language_name,
+      title: r.title,
+      subtitle: r.subtitle ?? '',
+      description: r.description ?? '',
+      descriptionAudioUrl: r.description_audio_url || undefined,
+      coverImageUrl: r.cover_image_url || undefined,
+      narratorName: r.narrator_name ?? '',
+      status: r.status ?? 'published',
+      versionNumber: Number(r.version_number ?? 1),
+      isDeleted: Boolean(r.is_deleted),
+      createdAt: String(r.created_at),
+      updatedAt: String(r.updated_at),
+    }));
+
+    const chapters: OttChapter[] = [];
+    const units: OttLegalUnit[] = [];
+    for (const r of nodesRes.data ?? []) {
+      if (r.node_type === 'chapter') {
+        chapters.push({
+          id: r.id,
+          editionId: r.edition_id,
+          chapterOrder: Number(r.node_order ?? 1),
+          chapterNumber: r.node_number,
+          title: r.title,
+          overviewDefinition: r.definition ?? '',
+          overviewAudioUrl: r.overview_audio_url || undefined,
+          estimatedMinutes: Number(r.estimated_minutes ?? 5),
+          versionNumber: Number(r.version_number ?? 1),
+          isDeleted: Boolean(r.is_deleted),
+          createdAt: String(r.created_at),
+          updatedAt: String(r.updated_at),
+        });
+      } else {
+        units.push({
+          id: r.id,
+          chapterId: r.parent_node_id,
+          editionId: r.edition_id,
+          unitType:
+            r.node_type === 'section' || r.node_type === 'topic' ? r.node_type : 'article',
+          unitOrder: Number(r.node_order ?? 1),
+          unitNumber: r.node_number,
+          title: r.title,
+          definition: r.definition ?? '',
+          purposeBackground: r.purpose_background ?? '',
+          deepExplanation: r.deep_explanation ?? '',
+          practicalExamples: r.practical_examples ?? '',
+          definitionAudioUrl: r.definition_audio_url || undefined,
+          purposeAudioUrl: r.purpose_audio_url || undefined,
+          explanationAudioUrl: r.explanation_audio_url || undefined,
+          examplesAudioUrl: r.examples_audio_url || undefined,
+          fullUnitAudioUrl: r.full_audio_url || undefined,
+          audioDurationSec: Number(r.audio_duration_sec ?? 0),
+          versionNumber: Number(r.version_number ?? 1),
+          isDeleted: Boolean(r.is_deleted),
+          createdAt: String(r.created_at),
+          updatedAt: String(r.updated_at),
+        });
+      }
+    }
+
+    const audioAssets: OttAudioAsset[] = (assetsRes.data ?? []).map((r) => ({
+      id: r.id,
+      entityType: r.entity_type,
+      entityId: r.entity_id,
+      blockRole: r.block_role,
+      originalFilename: r.original_filename,
+      s3Bucket: r.s3_bucket || undefined,
+      s3Key: r.s3_key || undefined,
+      storageUrl: r.storage_url,
+      publicUrl: r.public_url || undefined,
+      mimeType: r.mime_type,
+      byteSize: Number(r.byte_size ?? 0),
+      durationSec: Number(r.duration_sec ?? 0),
+      sha256Checksum: r.sha256_checksum ?? '',
+      uploadedByUid: r.uploaded_by_uid ?? 'cms-admin',
+      createdAt: String(r.created_at),
+    }));
+
+    return { masterBooks, editions, chapters, units, audioAssets };
+  }
+
+  private async persistToSupabase(db: OttCatalogDatabase): Promise<void> {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return;
+
+    if (db.masterBooks.length > 0) {
+      const { error } = await supabase.from('master_books').upsert(
+        db.masterBooks.map((mb) => ({
+          id: mb.id,
+          slug: mb.slug,
+          book_type: mb.bookType,
+          canonical_title: mb.canonicalTitle,
+          jurisdiction: mb.jurisdiction,
+          enactment_year: mb.enactmentYear,
+          cover_image_url: mb.coverImageUrl ?? null,
+          cover_tone: mb.coverTone,
+          glossary_json: mb.glossaryTerms ?? [],
+          version_number: mb.versionNumber,
+          is_deleted: mb.isDeleted,
+          created_at: mb.createdAt,
+          updated_at: mb.updatedAt,
+        }))
+      );
+      if (error) throw new Error(`Supabase master_books upsert failed: ${error.message}`);
+    }
+
+    if (db.editions.length > 0) {
+      const { error } = await supabase.from('book_editions').upsert(
+        db.editions.map((ed) => ({
+          id: ed.id,
+          master_book_id: ed.masterBookId,
+          language_code: ed.languageCode,
+          language_name: ed.languageName,
+          native_language_name: ed.nativeLanguageName,
+          title: ed.title,
+          subtitle: ed.subtitle,
+          description: ed.description,
+          description_audio_url: ed.descriptionAudioUrl ?? null,
+          cover_image_url: ed.coverImageUrl ?? null,
+          narrator_name: ed.narratorName,
+          status: ed.status,
+          version_number: ed.versionNumber,
+          is_deleted: ed.isDeleted,
+          created_at: ed.createdAt,
+          updated_at: ed.updatedAt,
+        }))
+      );
+      if (error) throw new Error(`Supabase book_editions upsert failed: ${error.message}`);
+    }
+
+    // Upsert chapter rows first so parent_node_id foreign keys exist for child nodes
+    if (db.chapters.length > 0) {
+      const { error } = await supabase.from('content_nodes').upsert(
+        db.chapters.map((ch) => ({
+          id: ch.id,
+          edition_id: ch.editionId,
+          parent_node_id: null,
+          node_type: 'chapter',
+          node_order: ch.chapterOrder,
+          node_number: ch.chapterNumber,
+          title: ch.title,
+          definition: ch.overviewDefinition,
+          purpose_background: '',
+          deep_explanation: '',
+          practical_examples: '',
+          estimated_minutes: ch.estimatedMinutes,
+          overview_audio_url: ch.overviewAudioUrl ?? null,
+          definition_audio_url: null,
+          purpose_audio_url: null,
+          explanation_audio_url: null,
+          examples_audio_url: null,
+          full_audio_url: null,
+          audio_duration_sec: 0,
+          version_number: ch.versionNumber,
+          is_deleted: ch.isDeleted,
+          created_at: ch.createdAt,
+          updated_at: ch.updatedAt,
+        }))
+      );
+      if (error) throw new Error(`Supabase content_nodes (chapters) upsert failed: ${error.message}`);
+    }
+
+    if (db.units.length > 0) {
+      const { error } = await supabase.from('content_nodes').upsert(
+        db.units.map((u) => ({
+          id: u.id,
+          edition_id: u.editionId,
+          parent_node_id: u.chapterId,
+          node_type: u.unitType,
+          node_order: u.unitOrder,
+          node_number: u.unitNumber,
+          title: u.title,
+          definition: u.definition,
+          purpose_background: u.purposeBackground,
+          deep_explanation: u.deepExplanation,
+          practical_examples: u.practicalExamples,
+          estimated_minutes: 3,
+          overview_audio_url: null,
+          definition_audio_url: u.definitionAudioUrl ?? null,
+          purpose_audio_url: u.purposeAudioUrl ?? null,
+          explanation_audio_url: u.explanationAudioUrl ?? null,
+          examples_audio_url: u.examplesAudioUrl ?? null,
+          full_audio_url: u.fullUnitAudioUrl ?? null,
+          audio_duration_sec: u.audioDurationSec,
+          version_number: u.versionNumber,
+          is_deleted: u.isDeleted,
+          created_at: u.createdAt,
+          updated_at: u.updatedAt,
+        }))
+      );
+      if (error) throw new Error(`Supabase content_nodes (units) upsert failed: ${error.message}`);
+    }
+
+    if (db.audioAssets.length > 0) {
+      const { error } = await supabase.from('audio_assets').upsert(
+        db.audioAssets.map((a) => ({
+          id: a.id,
+          entity_type: a.entityType,
+          entity_id: a.entityId,
+          block_role: a.blockRole,
+          original_filename: a.originalFilename,
+          s3_bucket: a.s3Bucket ?? 'Constitution Files',
+          s3_key: a.s3Key ?? '',
+          storage_url: a.storageUrl,
+          public_url: a.publicUrl ?? '',
+          mime_type: a.mimeType,
+          byte_size: a.byteSize,
+          duration_sec: a.durationSec,
+          sha256_checksum: a.sha256Checksum,
+          uploaded_by_uid: a.uploadedByUid,
+          created_at: a.createdAt,
+          updated_at: a.createdAt,
+        }))
+      );
+      if (error) throw new Error(`Supabase audio_assets upsert failed: ${error.message}`);
+    }
   }
 
   private async ensureLoaded(): Promise<OttCatalogDatabase> {
     if (this.data) return this.data;
+
+    if (this.shouldUseSupabaseDb()) {
+      try {
+        const remote = await this.loadFromSupabase();
+        if (remote) {
+          this.data = remote;
+          return this.data;
+        }
+        // Seed live Supabase database on first boot if empty
+        this.data = createSeededOttCatalog();
+        await this.persist();
+        return this.data;
+      } catch (err) {
+        console.error(
+          'Supabase catalog load failed, falling back to local catalog:',
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    }
+
     const candidatePaths =
-      this.dbFilePath === this.legacyDbFilePath
-        ? [this.dbFilePath]
-        : [this.dbFilePath, this.legacyDbFilePath];
+      this.legacyDbFilePath && this.dbFilePath !== this.legacyDbFilePath
+        ? [this.dbFilePath, this.legacyDbFilePath]
+        : [this.dbFilePath];
 
     for (const filePath of candidatePaths) {
       try {
@@ -189,25 +502,25 @@ export class OttCatalogStore {
           Array.isArray(parsed.units)
         ) {
           let needsMigrationPersist = filePath !== this.dbFilePath;
-          const hydratedMasterBooks = parsed.masterBooks.map((mb) =>
+          const hydratedMasterBooks: OttMasterBook[] = parsed.masterBooks.map((mb) =>
             Array.isArray(mb.glossaryTerms) && mb.glossaryTerms.length > 0
               ? mb
               : { ...mb, glossaryTerms: buildSeededGlossaryForMasterBook(mb) }
           );
 
-          const migratedEditions = parsed.editions.map((ed) => {
+          const migratedEditions: OttBookEdition[] = parsed.editions.map((ed) => {
             const nextUrl = migrateLegacyAudioUrl(ed.descriptionAudioUrl);
             if (nextUrl !== ed.descriptionAudioUrl) needsMigrationPersist = true;
             return { ...ed, descriptionAudioUrl: nextUrl };
           });
 
-          const migratedChapters = parsed.chapters.map((ch) => {
+          const migratedChapters: OttChapter[] = parsed.chapters.map((ch) => {
             const nextUrl = migrateLegacyAudioUrl(ch.overviewAudioUrl);
             if (nextUrl !== ch.overviewAudioUrl) needsMigrationPersist = true;
             return { ...ch, overviewAudioUrl: nextUrl };
           });
 
-          const migratedUnits = parsed.units.map((u) => {
+          const migratedUnits: OttLegalUnit[] = parsed.units.map((u) => {
             const definitionAudioUrl = migrateLegacyAudioUrl(u.definitionAudioUrl);
             const purposeAudioUrl = migrateLegacyAudioUrl(u.purposeAudioUrl);
             const explanationAudioUrl = migrateLegacyAudioUrl(u.explanationAudioUrl);
@@ -280,11 +593,16 @@ export class OttCatalogStore {
 
   private async persist(): Promise<void> {
     if (!this.data) return;
-    const snapshot = JSON.stringify(this.data, null, 2);
+    const dbSnapshot = structuredClone(this.data);
+    const jsonSnapshot = JSON.stringify(dbSnapshot, null, 2);
     this.writeChain = this.writeChain.then(async () => {
+      if (this.shouldUseSupabaseDb()) {
+        await this.persistToSupabase(dbSnapshot);
+        return;
+      }
       await fs.mkdir(path.dirname(this.dbFilePath), { recursive: true });
       const tempPath = `${this.dbFilePath}.${crypto.randomBytes(4).toString('hex')}.tmp`;
-      await fs.writeFile(tempPath, snapshot, 'utf-8');
+      await fs.writeFile(tempPath, jsonSnapshot, 'utf-8');
       await fs.rename(tempPath, this.dbFilePath);
     });
     await this.writeChain;
@@ -1006,12 +1324,42 @@ export class OttCatalogStore {
 
     const assetId = `aud-${crypto.randomUUID().slice(0, 12)}`;
     const safeFileName = `${assetId}${ext}`;
-    await fs.mkdir(this.audioDir, { recursive: true });
-    const resolvedPath = path.resolve(this.audioDir, safeFileName);
-    if (!resolvedPath.startsWith(this.audioDir + path.sep)) {
-      throw new Error('Invalid audio storage path.');
+    const s3Key = buildAudioS3Key({
+      entityType: input.entityType,
+      entityId: input.entityId,
+      assetId,
+      ext,
+    });
+
+    let s3Bucket: string | undefined;
+    let publicUrl: string | undefined;
+
+    if (this.shouldUseSupabaseS3()) {
+      const uploaded = await uploadAudioToSupabaseS3({
+        key: s3Key,
+        body: buffer,
+        contentType: normalizedMime,
+        metadata: {
+          entity_type: input.entityType,
+          entity_id: input.entityId,
+          block_role: input.blockRole,
+        },
+      });
+      if (uploaded) {
+        s3Bucket = uploaded.bucket;
+        publicUrl = uploaded.publicUrl;
+      }
     }
-    await fs.writeFile(resolvedPath, buffer);
+
+    // Also mirror locally when not using S3 (or as fast local disk cache)
+    if (!s3Bucket) {
+      await fs.mkdir(this.audioDir, { recursive: true });
+      const resolvedPath = path.resolve(this.audioDir, safeFileName);
+      if (!resolvedPath.startsWith(this.audioDir + path.sep)) {
+        throw new Error('Invalid audio storage path.');
+      }
+      await fs.writeFile(resolvedPath, buffer);
+    }
 
     const sha256Checksum = crypto.createHash('sha256').update(buffer).digest('hex');
     const storageUrl = `/api/books-structures/audio/${assetId}`;
@@ -1023,6 +1371,7 @@ export class OttCatalogStore {
       entityId: input.entityId,
       blockRole: input.blockRole,
       originalFilename: path.basename(input.originalFilename || safeFileName).slice(0, 200),
+      ...(s3Bucket ? { s3Bucket, s3Key, publicUrl } : {}),
       storageUrl,
       mimeType: normalizedMime,
       byteSize: buffer.length,
@@ -1050,6 +1399,19 @@ export class OttCatalogStore {
       else if (input.blockRole === 'unit_examples') unitPatch.examplesAudioUrl = storageUrl;
       else unitPatch.fullUnitAudioUrl = storageUrl;
       await this.updateLegalUnit(input.entityId, unitPatch);
+    } else if (input.entityType === 'content_node') {
+      const isChapter = db.chapters.some((c) => c.id === input.entityId);
+      if (isChapter) {
+        await this.updateChapter(input.entityId, { overviewAudioUrl: storageUrl });
+      } else {
+        const unitPatch: Partial<OttLegalUnit> = {};
+        if (input.blockRole === 'unit_definition') unitPatch.definitionAudioUrl = storageUrl;
+        else if (input.blockRole === 'unit_purpose') unitPatch.purposeAudioUrl = storageUrl;
+        else if (input.blockRole === 'unit_explanation') unitPatch.explanationAudioUrl = storageUrl;
+        else if (input.blockRole === 'unit_examples') unitPatch.examplesAudioUrl = storageUrl;
+        else unitPatch.fullUnitAudioUrl = storageUrl;
+        await this.updateLegalUnit(input.entityId, unitPatch);
+      }
     } else {
       await this.persist();
     }
@@ -1064,8 +1426,18 @@ export class OttCatalogStore {
       return null;
     }
 
-    // Seeded synthesized preview audio for instant playback on every seeded block
+    // Seeded audio clips: stream from Supabase S3 when configured, falling back to deterministic WAV synthesis
     if (assetId.startsWith('synth-')) {
+      if (this.shouldUseSupabaseS3()) {
+        const fromS3 = await downloadAudioFromSupabaseS3(`audio/seeded/${assetId}.wav`);
+        if (fromS3) {
+          return {
+            buffer: fromS3.buffer,
+            mimeType: fromS3.contentType || 'audio/wav',
+            filename: `${assetId}.wav`,
+          };
+        }
+      }
       return {
         buffer: synthesizePlayableWavBuffer(assetId, 2.4),
         mimeType: 'audio/wav',
@@ -1076,6 +1448,17 @@ export class OttCatalogStore {
     const db = await this.ensureLoaded();
     const asset = db.audioAssets.find((a) => a.id === assetId);
     if (!asset) return null;
+
+    if (this.shouldUseSupabaseS3() && asset.s3Key) {
+      const fromS3 = await downloadAudioFromSupabaseS3(asset.s3Key);
+      if (fromS3) {
+        return {
+          buffer: fromS3.buffer,
+          mimeType: asset.mimeType || fromS3.contentType,
+          filename: asset.originalFilename,
+        };
+      }
+    }
 
     const ext = ALLOWED_AUDIO_MIME_TYPES[asset.mimeType];
     if (!ext) return null;
@@ -1704,6 +2087,213 @@ export class OttCatalogStore {
     }
 
     return books;
+  }
+
+  // =========================================================================
+  // UNIFIED `content_nodes` PROJECTION & CRUD
+  // Mirrors the single `content_nodes` relational table & Firestore collection
+  // handling chapters, articles, sections, and biography topics with inline
+  // version_number, updated_at, and is_deleted metadata.
+  // =========================================================================
+
+  private mapChapterToContentNode(chapter: OttChapter): ContentNode {
+    return {
+      id: chapter.id,
+      editionId: chapter.editionId,
+      parentNodeId: null,
+      nodeType: 'chapter',
+      nodeOrder: chapter.chapterOrder,
+      nodeNumber: chapter.chapterNumber,
+      title: chapter.title,
+      definition: chapter.overviewDefinition,
+      purposeBackground: '',
+      deepExplanation: '',
+      practicalExamples: '',
+      estimatedMinutes: chapter.estimatedMinutes,
+      overviewAudioUrl: chapter.overviewAudioUrl,
+      audioDurationSec: 0,
+      versionNumber: chapter.versionNumber,
+      isDeleted: chapter.isDeleted,
+      createdAt: chapter.createdAt,
+      updatedAt: chapter.updatedAt,
+    };
+  }
+
+  private mapUnitToContentNode(unit: OttLegalUnit): ContentNode {
+    return {
+      id: unit.id,
+      editionId: unit.editionId,
+      parentNodeId: unit.chapterId,
+      nodeType: unit.unitType,
+      nodeOrder: unit.unitOrder,
+      nodeNumber: unit.unitNumber,
+      title: unit.title,
+      definition: unit.definition,
+      purposeBackground: unit.purposeBackground,
+      deepExplanation: unit.deepExplanation,
+      practicalExamples: unit.practicalExamples,
+      estimatedMinutes: 3,
+      definitionAudioUrl: unit.definitionAudioUrl,
+      purposeAudioUrl: unit.purposeAudioUrl,
+      explanationAudioUrl: unit.explanationAudioUrl,
+      examplesAudioUrl: unit.examplesAudioUrl,
+      fullAudioUrl: unit.fullUnitAudioUrl,
+      audioDurationSec: unit.audioDurationSec,
+      versionNumber: unit.versionNumber,
+      isDeleted: unit.isDeleted,
+      createdAt: unit.createdAt,
+      updatedAt: unit.updatedAt,
+    };
+  }
+
+  async listContentNodes(
+    editionId: string,
+    options?: { includeDeleted?: boolean; nodeType?: ContentNodeType }
+  ): Promise<ContentNode[]> {
+    const db = await this.ensureLoaded();
+    const includeDeleted = options?.includeDeleted ?? false;
+
+    const chapterNodes = db.chapters
+      .filter((ch) => ch.editionId === editionId && (includeDeleted || !ch.isDeleted))
+      .sort((a, b) => a.chapterOrder - b.chapterOrder)
+      .map((ch) => this.mapChapterToContentNode(ch));
+
+    const unitNodes = db.units
+      .filter((u) => u.editionId === editionId && (includeDeleted || !u.isDeleted))
+      .sort((a, b) => a.unitOrder - b.unitOrder)
+      .map((u) => this.mapUnitToContentNode(u));
+
+    const combined = [...chapterNodes, ...unitNodes];
+    if (options?.nodeType) {
+      return combined.filter((n) => n.nodeType === options.nodeType);
+    }
+    return combined;
+  }
+
+  async createContentNode(
+    editionId: string,
+    input: {
+      nodeType: ContentNodeType;
+      parentNodeId?: string | null;
+      nodeNumber: string;
+      title: string;
+      definition?: string;
+      purposeBackground?: string;
+      deepExplanation?: string;
+      practicalExamples?: string;
+      estimatedMinutes?: number;
+      overviewAudioUrl?: string;
+      definitionAudioUrl?: string;
+      purposeAudioUrl?: string;
+      explanationAudioUrl?: string;
+      examplesAudioUrl?: string;
+      fullAudioUrl?: string;
+      audioDurationSec?: number;
+    }
+  ): Promise<ContentNode> {
+    if (input.nodeType === 'chapter') {
+      const created = await this.createChapter(editionId, {
+        chapterNumber: input.nodeNumber,
+        title: input.title,
+        overviewDefinition: input.definition,
+        overviewAudioUrl: input.overviewAudioUrl,
+        estimatedMinutes: input.estimatedMinutes,
+      });
+      return this.mapChapterToContentNode(created);
+    }
+
+    const parentId = (input.parentNodeId ?? '').trim();
+    if (!parentId) {
+      throw new Error(`parentNodeId (chapter id) is required for node_type "${input.nodeType}".`);
+    }
+    const createdUnit = await this.createLegalUnit(parentId, {
+      unitNumber: input.nodeNumber,
+      title: input.title,
+      definition: input.definition ?? '',
+      purposeBackground: input.purposeBackground,
+      deepExplanation: input.deepExplanation,
+      practicalExamples: input.practicalExamples,
+      definitionAudioUrl: input.definitionAudioUrl,
+      purposeAudioUrl: input.purposeAudioUrl,
+      explanationAudioUrl: input.explanationAudioUrl,
+      examplesAudioUrl: input.examplesAudioUrl,
+      fullUnitAudioUrl: input.fullAudioUrl,
+      audioDurationSec: input.audioDurationSec,
+    });
+    return this.mapUnitToContentNode(createdUnit);
+  }
+
+  async updateContentNode(
+    nodeId: string,
+    patch: {
+      nodeNumber?: string;
+      title?: string;
+      definition?: string;
+      purposeBackground?: string;
+      deepExplanation?: string;
+      practicalExamples?: string;
+      estimatedMinutes?: number;
+      overviewAudioUrl?: string;
+      definitionAudioUrl?: string;
+      purposeAudioUrl?: string;
+      explanationAudioUrl?: string;
+      examplesAudioUrl?: string;
+      fullAudioUrl?: string;
+      audioDurationSec?: number;
+    }
+  ): Promise<ContentNode> {
+    const db = await this.ensureLoaded();
+    const isChapter = db.chapters.some((c) => c.id === nodeId);
+    if (isChapter) {
+      const updated = await this.updateChapter(nodeId, {
+        chapterNumber: patch.nodeNumber,
+        title: patch.title,
+        overviewDefinition: patch.definition,
+        overviewAudioUrl: patch.overviewAudioUrl,
+        estimatedMinutes: patch.estimatedMinutes,
+      });
+      return this.mapChapterToContentNode(updated);
+    }
+
+    const updatedUnit = await this.updateLegalUnit(nodeId, {
+      unitNumber: patch.nodeNumber,
+      title: patch.title,
+      definition: patch.definition,
+      purposeBackground: patch.purposeBackground,
+      deepExplanation: patch.deepExplanation,
+      practicalExamples: patch.practicalExamples,
+      definitionAudioUrl: patch.definitionAudioUrl,
+      purposeAudioUrl: patch.purposeAudioUrl,
+      explanationAudioUrl: patch.explanationAudioUrl,
+      examplesAudioUrl: patch.examplesAudioUrl,
+      fullUnitAudioUrl: patch.fullAudioUrl,
+      audioDurationSec: patch.audioDurationSec,
+    });
+    return this.mapUnitToContentNode(updatedUnit);
+  }
+
+  async softDeleteContentNode(
+    nodeId: string
+  ): Promise<{ node: ContentNode; deletedChildIds: string[] }> {
+    const db = await this.ensureLoaded();
+    const isChapter = db.chapters.some((c) => c.id === nodeId);
+    if (isChapter) {
+      const childIdsBefore = db.units
+        .filter((u) => u.chapterId === nodeId && !u.isDeleted)
+        .map((u) => u.id);
+      await this.softDeleteChapter(nodeId);
+      const deletedChapter = db.chapters.find((c) => c.id === nodeId)!;
+      return {
+        node: this.mapChapterToContentNode(deletedChapter),
+        deletedChildIds: childIdsBefore,
+      };
+    }
+    await this.softDeleteLegalUnit(nodeId);
+    const deletedUnit = db.units.find((u) => u.id === nodeId)!;
+    return {
+      node: this.mapUnitToContentNode(deletedUnit),
+      deletedChildIds: [],
+    };
   }
 }
 

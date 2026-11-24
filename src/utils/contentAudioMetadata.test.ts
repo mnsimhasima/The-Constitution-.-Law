@@ -20,6 +20,7 @@ test('inferContentNodeType accurately distinguishes articles, sections, and clau
   assert.equal(inferContentNodeType('अनुच्छेद 32'), 'article');
   assert.equal(inferContentNodeType('Section 7(1)'), 'section');
   assert.equal(inferContentNodeType('Sec. 35'), 'section');
+  assert.equal(inferContentNodeType('Topic 1.1'), 'topic');
   assert.equal(inferContentNodeType('Clause 39'), 'clause');
 });
 
@@ -100,7 +101,7 @@ test('sanitizeContentAudioMetadataRecord enforces firebase-blueprint.json bounda
     byteSize: MAX_CONTENT_AUDIO_BYTES * 2,
     durationSec: 999999,
     durationLabel: '',
-    audioUrl: '/api/ott/audio/aud-123456',
+    audioUrl: '/api/books-structures/audio/aud-123456',
     assetId: 'aud-123456',
     sha256Checksum: 'abc123',
     status: 'published',
@@ -149,7 +150,7 @@ test('findAudioMetadataForNode, buildClauseAudioAttachment, and mapOttBlockRoleT
     byteSize: 48044,
     durationSec: 42,
     durationLabel: '00:42',
-    audioUrl: '/api/ott/audio/aud-abc123',
+    audioUrl: '/api/books-structures/audio/aud-abc123',
     assetId: 'aud-abc123',
     sha256Checksum: 'deadbeef',
     status: 'published',
@@ -177,6 +178,6 @@ test('findAudioMetadataForNode, buildClauseAudioAttachment, and mapOttBlockRoleT
 
   const attachment = buildClauseAudioAttachment(recA);
   assert.equal(attachment.audioMetadataId, recA.id);
-  assert.equal(attachment.audioUrl, '/api/ott/audio/aud-abc123');
+  assert.equal(attachment.audioUrl, '/api/books-structures/audio/aud-abc123');
   assert.equal(attachment.blockRole, 'full');
 });

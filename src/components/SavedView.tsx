@@ -133,7 +133,7 @@ export function SavedView({
   cachedChapters = [],
   cachedAudioTotalBytes = 0,
   chapterCacheProgress = {},
-  audioVoice = 'Kore',
+  audioVoice = 'manual',
   audioMode = 'both',
   isOffline = false,
   onCacheChapterOffline,

@@ -1,19 +1,6 @@
 import type { User } from 'firebase/auth';
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-} from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { INITIAL_LAW_BOOKS } from '../data/booksData';
-import { db, handleFirestoreError, OperationType } from '../firebase';
 import type {
   AccountRole,
   AccountStatus,
@@ -391,7 +378,7 @@ function buildSeedState(): PersistedBackendState {
       priority: 'low',
       assignedTo: 'priya.security@constitutionlaw.org',
       resolutionNote:
-        'Confirmed: all notes, highlights, and bookmarks are stored in your private Firestore user profile and restore automatically on Google sign-in.',
+        'Confirmed: all notes, highlights, and bookmarks are stored in your private Supabase PostgreSQL user profile and restore automatically on Google sign-in.',
       createdAt: '2025-02-16T14:00:00.000Z',
       updatedAt: '2025-02-16T16:30:00.000Z',
     },
@@ -497,12 +484,17 @@ function loadInitialBackendState(): PersistedBackendState {
   }
 }
 
-function tsToIso(val: unknown): string {
-  if (typeof val === 'string') return val;
-  if (val && typeof val === 'object' && 'toDate' in val && typeof (val as { toDate: () => Date }).toDate === 'function') {
-    return (val as { toDate: () => Date }).toDate().toISOString();
+// Helper for fire-and-forget Supabase CMS writes
+async function supabaseCmsRequest(url: string, method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', body?: unknown) {
+  const res = await fetch(url, {
+    method,
+    ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(errText || `HTTP ${res.status}`);
   }
-  return new Date().toISOString();
+  return res.json().catch(() => ({}));
 }
 
 export function useBackendStore(user: User | null) {
@@ -517,235 +509,103 @@ export function useBackendStore(user: User | null) {
     }
   }, [state]);
 
-  // Listen to live published CMS books & approved Community posts from Firestore (public read allowed!)
+  // Hydrate all CMS collections from Supabase PostgreSQL via /api/supabase/cms/bootstrap
   useEffect(() => {
-    const qBooks = query(collection(db, 'cmsBooks'), where('status', '==', 'published'));
-    const unsubBooks = onSnapshot(
-      qBooks,
-      (snap) => {
-        if (snap.empty) return;
-        const remoteBooks: CmsBook[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            ...(data as unknown as CmsBook),
-            id: d.id,
-            createdAt: tsToIso(data.createdAt),
-            updatedAt: tsToIso(data.updatedAt),
-          };
-        });
-        setState((prev) => {
-          const map = new Map(prev.cmsBooks.map((b) => [b.id, b]));
-          remoteBooks.forEach((rb) => map.set(rb.id, rb));
-          return { ...prev, cmsBooks: Array.from(map.values()) };
-        });
-      },
-      () => {
-        // Silently rely on seeded/cached catalog if offline
+    let cancelled = false;
+    async function hydrateFromSupabase() {
+      try {
+        const res = await fetch('/api/supabase/cms/bootstrap', { cache: 'no-store' });
+        if (!res.ok || cancelled) return;
+        const remote = (await res.json()) as Partial<PersistedBackendState>;
+        if (cancelled) return;
+        setState((prev) => ({
+          cmsBooks:
+            Array.isArray(remote.cmsBooks) && remote.cmsBooks.length > 0
+              ? remote.cmsBooks
+              : prev.cmsBooks,
+          audioTracks:
+            Array.isArray(remote.audioTracks) && remote.audioTracks.length > 0
+              ? remote.audioTracks
+              : prev.audioTracks,
+          contentAudioMetadata:
+            Array.isArray(remote.contentAudioMetadata) && remote.contentAudioMetadata.length > 0
+              ? remote.contentAudioMetadata.map((item) =>
+                  sanitizeContentAudioMetadataRecord({ ...item, firestoreSynced: true })
+                )
+              : prev.contentAudioMetadata,
+          staffRoles:
+            Array.isArray(remote.staffRoles) && remote.staffRoles.length > 0
+              ? remote.staffRoles
+              : prev.staffRoles,
+          userDirectory:
+            Array.isArray(remote.userDirectory) && remote.userDirectory.length > 0
+              ? remote.userDirectory
+              : prev.userDirectory,
+          communityPosts:
+            Array.isArray(remote.communityPosts) && remote.communityPosts.length > 0
+              ? remote.communityPosts
+              : prev.communityPosts,
+          supportTickets:
+            Array.isArray(remote.supportTickets) && remote.supportTickets.length > 0
+              ? remote.supportTickets
+              : prev.supportTickets,
+          auditLogs:
+            Array.isArray(remote.auditLogs) && remote.auditLogs.length > 0
+              ? remote.auditLogs
+              : prev.auditLogs,
+          sourcesRights:
+            Array.isArray(remote.sourcesRights) && remote.sourcesRights.length > 0
+              ? remote.sourcesRights
+              : prev.sourcesRights,
+          systemSettings: remote.systemSettings
+            ? { ...prev.systemSettings, ...remote.systemSettings }
+            : prev.systemSettings,
+        }));
+      } catch {
+        // Retain local cache if offline
       }
-    );
-
-    const qPosts = query(collection(db, 'communityPosts'), where('moderationStatus', '==', 'approved'));
-    const unsubPosts = onSnapshot(
-      qPosts,
-      (snap) => {
-        if (snap.empty) return;
-        const remotePosts: ModerationCommunityPost[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            ...(data as unknown as ModerationCommunityPost),
-            id: d.id,
-            createdAt: tsToIso(data.createdAt),
-            updatedAt: tsToIso(data.updatedAt),
-          };
-        });
-        setState((prev) => {
-          const map = new Map(prev.communityPosts.map((p) => [p.id, p]));
-          remotePosts.forEach((rp) => map.set(rp.id, rp));
-          return {
-            ...prev,
-            communityPosts: Array.from(map.values()).sort((a, b) =>
-              b.createdAt.localeCompare(a.createdAt)
-            ),
-          };
-        });
-      },
-      () => {
-        // Silently rely on cached community posts if offline
-      }
-    );
-
-    const qContentAudio = query(
-      collection(db, 'contentAudioMetadata'),
-      where('status', '==', 'published')
-    );
-    const unsubContentAudio = onSnapshot(
-      qContentAudio,
-      (snap) => {
-        if (snap.empty) return;
-        const remoteAudio: ContentAudioMetadataRecord[] = snap.docs.map((d) => {
-          const data = d.data();
-          return sanitizeContentAudioMetadataRecord({
-            ...(data as unknown as ContentAudioMetadataRecord),
-            id: d.id,
-            createdAt: tsToIso(data.createdAt),
-            updatedAt: tsToIso(data.updatedAt),
-            firestoreSynced: true,
-          });
-        });
-        setState((prev) => {
-          const map = new Map(prev.contentAudioMetadata.map((item) => [item.id, item]));
-          remoteAudio.forEach((item) => map.set(item.id, item));
-          return {
-            ...prev,
-            contentAudioMetadata: Array.from(map.values()).sort((a, b) =>
-              b.updatedAt.localeCompare(a.updatedAt)
-            ),
-          };
-        });
-      },
-      (error) => {
-        try {
-          handleFirestoreError(error, OperationType.LIST, 'contentAudioMetadata');
-        } catch {
-          // Gracefully retain cached metadata when offline
-        }
-      }
-    );
-
+    }
+    void hydrateFromSupabase();
     return () => {
-      unsubBooks();
-      unsubPosts();
-      unsubContentAudio();
+      cancelled = true;
     };
   }, []);
 
-  // Record authenticated Google user in userDirectory & subscribe to user's own tickets + admin streams
+  // Record authenticated Google user in Supabase user_directory
   useEffect(() => {
     if (!user) return;
     const nowIso = new Date().toISOString();
     const resolvedRole = resolveUserRole(user.email, user.uid, state.staffRoles);
 
-    // Update local directory immediately
+    const entry: UserDirectoryRecord = {
+      uid: user.uid,
+      displayName: user.displayName ?? 'Civic Reader',
+      email: user.email ?? '',
+      photoURL: user.photoURL ?? '',
+      provider: user.providerData?.[0]?.providerId ?? 'google.com',
+      role: resolvedRole,
+      status: 'active',
+      lastLoginAt: nowIso,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
     setState((prev) => {
       const existing = prev.userDirectory.find((u) => u.uid === user.uid || u.email === user.email);
-      const entry: UserDirectoryRecord = {
-        uid: user.uid,
+      const merged: UserDirectoryRecord = {
+        ...entry,
         displayName: user.displayName ?? existing?.displayName ?? 'Civic Reader',
         email: user.email ?? existing?.email ?? '',
-        photoURL: user.photoURL ?? '',
-        provider: user.providerData?.[0]?.providerId ?? 'google.com',
-        role: resolvedRole,
         status: existing?.status ?? 'active',
-        lastLoginAt: nowIso,
         createdAt: existing?.createdAt ?? nowIso,
-        updatedAt: nowIso,
       };
-      const filtered = prev.userDirectory.filter((u) => u.uid !== user.uid && u.email !== entry.email);
-      return { ...prev, userDirectory: [entry, ...filtered] };
+      const filtered = prev.userDirectory.filter((u) => u.uid !== user.uid && u.email !== merged.email);
+      return { ...prev, userDirectory: [merged, ...filtered] };
     });
 
-    // Upsert to Firestore userDirectory/{uid} (allowed by firestore.rules!)
-    const dirRef = doc(db, 'userDirectory', user.uid);
-    void setDoc(
-      dirRef,
-      {
-        uid: user.uid,
-        displayName: user.displayName ?? 'Civic Reader',
-        email: user.email ?? '',
-        photoURL: user.photoURL ?? '',
-        provider: user.providerData?.[0]?.providerId ?? 'google.com',
-        role: resolvedRole === 'admin' ? 'admin' : 'user',
-        status: 'active',
-        lastLoginAt: serverTimestamp(),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    ).catch(() => {
-      // Ignore if rules reject merge on existing timestamps; fallback update
-      void updateDoc(dirRef, {
-        displayName: user.displayName ?? 'Civic Reader',
-        photoURL: user.photoURL ?? '',
-        lastLoginAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      }).catch(() => {});
-    });
-
-    // Listen to user's own support tickets (or all tickets if bootstrapped admin)
-    const isBootstrapAdmin = (user.email ?? '').toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL;
-    const ticketQuery = isBootstrapAdmin
-      ? query(collection(db, 'supportTickets'))
-      : query(collection(db, 'supportTickets'), where('userId', '==', user.uid));
-
-    const unsubTickets = onSnapshot(
-      ticketQuery,
-      (snap) => {
-        if (snap.empty) return;
-        const remoteTickets: SupportTicket[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            ...(data as unknown as SupportTicket),
-            id: d.id,
-            createdAt: tsToIso(data.createdAt),
-            updatedAt: tsToIso(data.updatedAt),
-          };
-        });
-        setState((prev) => {
-          const map = new Map(prev.supportTickets.map((t) => [t.id, t]));
-          remoteTickets.forEach((rt) => map.set(rt.id, rt));
-          return {
-            ...prev,
-            supportTickets: Array.from(map.values()).sort((a, b) =>
-              b.createdAt.localeCompare(a.createdAt)
-            ),
-          };
-        });
-      },
-      () => {}
-    );
-
-    const staffAudioQuery = isBootstrapAdmin
-      ? query(collection(db, 'contentAudioMetadata'))
-      : query(collection(db, 'contentAudioMetadata'), where('uploadedByUid', '==', user.uid));
-
-    const unsubStaffAudio = onSnapshot(
-      staffAudioQuery,
-      (snap) => {
-        if (snap.empty) return;
-        const remoteAudio: ContentAudioMetadataRecord[] = snap.docs.map((d) => {
-          const data = d.data();
-          return sanitizeContentAudioMetadataRecord({
-            ...(data as unknown as ContentAudioMetadataRecord),
-            id: d.id,
-            createdAt: tsToIso(data.createdAt),
-            updatedAt: tsToIso(data.updatedAt),
-            firestoreSynced: true,
-          });
-        });
-        setState((prev) => {
-          const map = new Map(prev.contentAudioMetadata.map((item) => [item.id, item]));
-          remoteAudio.forEach((item) => map.set(item.id, item));
-          return {
-            ...prev,
-            contentAudioMetadata: Array.from(map.values()).sort((a, b) =>
-              b.updatedAt.localeCompare(a.updatedAt)
-            ),
-          };
-        });
-      },
-      (error) => {
-        try {
-          handleFirestoreError(error, OperationType.LIST, 'contentAudioMetadata');
-        } catch {
-          // Gracefully retain cached metadata if not yet authorized
-        }
-      }
-    );
-
-    return () => {
-      unsubTickets();
-      unsubStaffAudio();
-    };
+    void supabaseCmsRequest(`/api/supabase/cms/users/${encodeURIComponent(user.uid)}`, 'PUT', {
+      entry,
+    }).catch(() => {});
   }, [user?.uid, user?.email]);
 
   const currentAccountRole: AccountRole = useMemo(
@@ -777,8 +637,8 @@ export function useBackendStore(user: User | null) {
       const logId = `log-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       const entry: AuditLogEntry = {
         id: logId,
-        actorUid: actor.uid,
-        actorEmail: actor.email,
+        actorUid: user?.uid ?? actor.uid,
+        actorEmail: user?.email ?? actor.email,
         actorRole: actor.role,
         action,
         targetType,
@@ -791,18 +651,7 @@ export function useBackendStore(user: User | null) {
         auditLogs: [entry, ...prev.auditLogs].slice(0, 150),
       }));
 
-      if (user) {
-        void setDoc(doc(db, 'auditLogs', logId), {
-          actorUid: user.uid,
-          actorEmail: user.email ?? actor.email,
-          actorRole: actor.role,
-          action,
-          targetType,
-          targetId,
-          summary,
-          createdAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+      void supabaseCmsRequest('/api/supabase/cms/audit-logs', 'POST', { entry }).catch(() => {});
     },
     [user]
   );
@@ -810,7 +659,12 @@ export function useBackendStore(user: User | null) {
   const upsertCmsBook = useCallback(
     (book: CmsBook, actor: StaffActor) => {
       const nowIso = new Date().toISOString();
-      const updatedBook: CmsBook = { ...book, updatedAt: nowIso };
+      const updatedBook: CmsBook = {
+        ...book,
+        createdByUid: user?.uid ?? book.createdByUid ?? actor.uid,
+        createdByEmail: user?.email ?? book.createdByEmail ?? actor.email,
+        updatedAt: nowIso,
+      };
       setState((prev) => {
         const exists = prev.cmsBooks.some((b) => b.id === book.id);
         const cmsBooks = exists
@@ -821,20 +675,13 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'BOOK_SAVED',
-        'cmsBooks',
+        'cms_books',
         book.id,
         `Saved "${book.shortTitle}" (status: ${book.status}, ${book.chapters.length} chapters).`
       );
-      if (user) {
-        const { coverImage: _omitCover, ...firestorePayload } = updatedBook;
-        void setDoc(doc(db, 'cmsBooks', book.id), {
-          ...firestorePayload,
-          createdByUid: user.uid,
-          createdByEmail: user.email ?? actor.email,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+      void supabaseCmsRequest(`/api/supabase/cms/books/${encodeURIComponent(book.id)}`, 'PUT', {
+        book: updatedBook,
+      }).catch(() => {});
     },
     [appendAuditLog, user]
   );
@@ -852,24 +699,17 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'BULK_IMPORT',
-        'cmsBooks',
+        'cms_books',
         books.map((b) => b.id).join(',').slice(0, 100) || 'bulk',
         `Bulk imported ${books.length} book(s): ${books.map((b) => b.shortTitle).join(', ').slice(0, 220)}.`
       );
-      if (user) {
-        books.forEach((book) => {
-          const { coverImage: _omitCover, ...firestorePayload } = book;
-          void setDoc(doc(db, 'cmsBooks', book.id), {
-            ...firestorePayload,
-            createdByUid: user.uid,
-            createdByEmail: user.email ?? actor.email,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          }).catch(() => {});
-        });
-      }
+      books.forEach((book) => {
+        void supabaseCmsRequest(`/api/supabase/cms/books/${encodeURIComponent(book.id)}`, 'PUT', {
+          book: { ...book, updatedAt: nowIso },
+        }).catch(() => {});
+      });
     },
-    [appendAuditLog, user]
+    [appendAuditLog]
   );
 
   const reviewCmsBook = useCallback(
@@ -899,18 +739,19 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         actionMap[nextStatus],
-        'cmsBooks',
+        'cms_books',
         bookId,
         `Updated "${targetName}" to ${nextStatus}.${reviewNotes ? ` Note: ${reviewNotes}` : ''}`
       );
-      if (user) {
-        void updateDoc(doc(db, 'cmsBooks', bookId), {
+      void supabaseCmsRequest(
+        `/api/supabase/cms/books/${encodeURIComponent(bookId)}/review`,
+        'PATCH',
+        {
           status: nextStatus,
-          reviewedByEmail: user.email ?? actor.email,
+          reviewedByEmail: user?.email ?? actor.email,
           reviewNotes,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+        }
+      ).catch(() => {});
     },
     [appendAuditLog, user]
   );
@@ -921,45 +762,23 @@ export function useBackendStore(user: User | null) {
         ...prev,
         cmsBooks: prev.cmsBooks.filter((b) => b.id !== bookId),
       }));
-      appendAuditLog(actor, 'BOOK_DELETED', 'cmsBooks', bookId, `Deleted book ${bookId} from CMS.`);
-      if (user) {
-        void deleteDoc(doc(db, 'cmsBooks', bookId)).catch(() => {});
-      }
+      appendAuditLog(actor, 'BOOK_DELETED', 'cms_books', bookId, `Deleted book ${bookId} from CMS.`);
+      void supabaseCmsRequest(`/api/supabase/cms/books/${encodeURIComponent(bookId)}`, 'DELETE').catch(
+        () => {}
+      );
     },
-    [appendAuditLog, user]
+    [appendAuditLog]
   );
 
-  const syncBookChaptersToFirestore = useCallback(
-    async (bookSnapshot: CmsBook, actor: StaffActor) => {
-      if (!user) return;
-      const bookRef = doc(db, 'cmsBooks', bookSnapshot.id);
-      try {
-        const existingSnap = await getDoc(bookRef);
-        if (existingSnap.exists()) {
-          await updateDoc(bookRef, {
-            chapters: bookSnapshot.chapters,
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          const { coverImage: _omitCover, ...firestorePayload } = bookSnapshot;
-          await setDoc(bookRef, {
-            ...firestorePayload,
-            createdByUid: user.uid,
-            createdByEmail: user.email ?? actor.email,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        }
-      } catch (error) {
-        try {
-          handleFirestoreError(error, OperationType.WRITE, `cmsBooks/${bookSnapshot.id}`);
-        } catch {
-          // Keep local state resilient if offline or role-restricted
-        }
-      }
-    },
-    [user]
-  );
+  const syncBookChaptersToSupabase = useCallback(async (bookSnapshot: CmsBook) => {
+    try {
+      await supabaseCmsRequest(`/api/supabase/cms/books/${encodeURIComponent(bookSnapshot.id)}`, 'PUT', {
+        book: bookSnapshot,
+      });
+    } catch {
+      // Keep local state resilient if offline
+    }
+  }, []);
 
   const addChapterToBook = useCallback(
     (bookId: string, chapter: Chapter, actor: StaffActor) => {
@@ -976,15 +795,15 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'CHAPTER_ADDED',
-        'cmsBooks',
+        'cms_books',
         bookId,
         `Added chapter "${chapter.title.en}" to book ${bookId}.`
       );
       if (updatedSnapshot) {
-        void syncBookChaptersToFirestore(updatedSnapshot, actor);
+        void syncBookChaptersToSupabase(updatedSnapshot);
       }
     },
-    [appendAuditLog, syncBookChaptersToFirestore]
+    [appendAuditLog, syncBookChaptersToSupabase]
   );
 
   const upsertClauseInBook = useCallback(
@@ -1013,15 +832,15 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'CLAUSE_SAVED',
-        'cmsBooks',
+        'cms_books',
         `${bookId}/${clause.id}`,
         `Saved ${clause.number} ("${clause.principle.en}") in ${bookId}.`
       );
       if (updatedSnapshot) {
-        void syncBookChaptersToFirestore(updatedSnapshot, actor);
+        void syncBookChaptersToSupabase(updatedSnapshot);
       }
     },
-    [appendAuditLog, syncBookChaptersToFirestore]
+    [appendAuditLog, syncBookChaptersToSupabase]
   );
 
   const deleteClauseInBook = useCallback(
@@ -1044,12 +863,12 @@ export function useBackendStore(user: User | null) {
           return updatedSnapshot;
         }),
       }));
-      appendAuditLog(actor, 'CLAUSE_DELETED', 'cmsBooks', `${bookId}/${clauseId}`, `Removed clause ${clauseId}.`);
+      appendAuditLog(actor, 'CLAUSE_DELETED', 'cms_books', `${bookId}/${clauseId}`, `Removed clause ${clauseId}.`);
       if (updatedSnapshot) {
-        void syncBookChaptersToFirestore(updatedSnapshot, actor);
+        void syncBookChaptersToSupabase(updatedSnapshot);
       }
     },
-    [appendAuditLog, syncBookChaptersToFirestore]
+    [appendAuditLog, syncBookChaptersToSupabase]
   );
 
   const upsertContentAudioMetadata = useCallback(
@@ -1118,38 +937,20 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'AUDIO_NODE_LINKED',
-        'contentAudioMetadata',
+        'content_audio_metadata',
         sanitized.id,
-        `Linked ${sanitized.fileName} (${sanitized.blockRole}, ${sanitized.language.toUpperCase()}) to ${sanitized.contentNodeNumber} (${sanitized.contentNodeId}).`
+        `Linked ${sanitized.fileName} (${sanitized.blockRole}, ${sanitized.language.toUpperCase()}) to ${sanitized.contentNodeNumber} (${sanitized.contentNodeId}) in Supabase.`
       );
 
-      if (!user) {
-        return { record: sanitized, firestoreSynced: false };
-      }
-
-      const audioDocRef = doc(db, 'contentAudioMetadata', sanitized.id);
-      const { firestoreSynced: _omitSync, createdAt: _omitCreated, updatedAt: _omitUpdated, ...baseFields } = sanitized;
-
       try {
-        const existingDoc = await getDoc(audioDocRef);
-        if (existingDoc.exists()) {
-          const { id: _omitId, uploadedByUid: _omitUid, uploadedByEmail: _omitEmail, ...mutableFields } = baseFields;
-          await updateDoc(audioDocRef, {
-            ...mutableFields,
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          await setDoc(audioDocRef, {
-            ...baseFields,
-            uploadedByUid: user.uid,
-            uploadedByEmail: user.email ?? actor.email,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        }
+        await supabaseCmsRequest(
+          `/api/supabase/cms/content-audio/${encodeURIComponent(sanitized.id)}`,
+          'PUT',
+          { record: sanitized }
+        );
 
         if (updatedCmsBook) {
-          await syncBookChaptersToFirestore(updatedCmsBook, actor);
+          await syncBookChaptersToSupabase(updatedCmsBook);
         }
 
         const syncedRecord: ContentAudioMetadataRecord = { ...sanitized, firestoreSynced: true };
@@ -1161,19 +962,14 @@ export function useBackendStore(user: User | null) {
         }));
         return { record: syncedRecord, firestoreSynced: true };
       } catch (error) {
-        try {
-          handleFirestoreError(error, OperationType.WRITE, `contentAudioMetadata/${sanitized.id}`);
-        } catch (wrapped) {
-          return {
-            record: sanitized,
-            firestoreSynced: false,
-            error: wrapped instanceof Error ? wrapped.message : String(error),
-          };
-        }
-        return { record: sanitized, firestoreSynced: false };
+        return {
+          record: sanitized,
+          firestoreSynced: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     },
-    [appendAuditLog, syncBookChaptersToFirestore, user]
+    [appendAuditLog, syncBookChaptersToSupabase, user]
   );
 
   const deleteContentAudioMetadata = useCallback(
@@ -1222,27 +1018,24 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'AUDIO_NODE_UNLINKED',
-        'contentAudioMetadata',
+        'content_audio_metadata',
         audioId,
         `Removed linked audio metadata ${audioId}.`
       );
 
-      if (user) {
-        try {
-          await deleteDoc(doc(db, 'contentAudioMetadata', audioId));
-          if (updatedCmsBook) {
-            await syncBookChaptersToFirestore(updatedCmsBook, actor);
-          }
-        } catch (error) {
-          try {
-            handleFirestoreError(error, OperationType.DELETE, `contentAudioMetadata/${audioId}`);
-          } catch {
-            // Keep local deletion resilient
-          }
+      try {
+        await supabaseCmsRequest(
+          `/api/supabase/cms/content-audio/${encodeURIComponent(audioId)}`,
+          'DELETE'
+        );
+        if (updatedCmsBook) {
+          await syncBookChaptersToSupabase(updatedCmsBook);
         }
+      } catch {
+        // Keep local deletion resilient
       }
     },
-    [appendAuditLog, syncBookChaptersToFirestore, user]
+    [appendAuditLog, syncBookChaptersToSupabase]
   );
 
   const updateContentAudioStatus = useCallback(
@@ -1257,32 +1050,32 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'AUDIO_NODE_STATUS_UPDATED',
-        'contentAudioMetadata',
+        'content_audio_metadata',
         audioId,
         `Set linked node audio ${audioId} status to ${status}.`
       );
-      if (user) {
-        try {
-          await updateDoc(doc(db, 'contentAudioMetadata', audioId), {
-            status,
-            updatedAt: serverTimestamp(),
-          });
-        } catch (error) {
-          try {
-            handleFirestoreError(error, OperationType.UPDATE, `contentAudioMetadata/${audioId}`);
-          } catch {
-            // Keep local state resilient
-          }
-        }
+      try {
+        await supabaseCmsRequest(
+          `/api/supabase/cms/content-audio/${encodeURIComponent(audioId)}/status`,
+          'PATCH',
+          { status }
+        );
+      } catch {
+        // Keep local state resilient
       }
     },
-    [appendAuditLog, user]
+    [appendAuditLog]
   );
 
   const upsertAudioTrack = useCallback(
     (track: AudioTrackRecord, actor: StaffActor) => {
       const nowIso = new Date().toISOString();
-      const nextTrack: AudioTrackRecord = { ...track, updatedAt: nowIso };
+      const nextTrack: AudioTrackRecord = {
+        ...track,
+        uploadedByUid: user?.uid ?? track.uploadedByUid ?? actor.uid,
+        uploadedByEmail: user?.email ?? track.uploadedByEmail ?? actor.email,
+        updatedAt: nowIso,
+      };
       setState((prev) => {
         const exists = prev.audioTracks.some((t) => t.id === track.id);
         return {
@@ -1295,19 +1088,15 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'AUDIO_SAVED',
-        'audioTracks',
+        'audio_tracks',
         track.id,
         `Uploaded/updated audio track "${track.chapterTitle}" (${track.language.toUpperCase()}).`
       );
-      if (user) {
-        void setDoc(doc(db, 'audioTracks', track.id), {
-          ...nextTrack,
-          uploadedByUid: user.uid,
-          uploadedByEmail: user.email ?? actor.email,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+      void supabaseCmsRequest(
+        `/api/supabase/cms/audio-tracks/${encodeURIComponent(track.id)}`,
+        'PUT',
+        { track: nextTrack }
+      ).catch(() => {});
     },
     [appendAuditLog, user]
   );
@@ -1324,18 +1113,17 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'AUDIO_STATUS_UPDATED',
-        'audioTracks',
+        'audio_tracks',
         trackId,
         `Set audio track ${trackId} status to ${status}.`
       );
-      if (user) {
-        void updateDoc(doc(db, 'audioTracks', trackId), {
-          status,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+      void supabaseCmsRequest(
+        `/api/supabase/cms/audio-tracks/${encodeURIComponent(trackId)}/status`,
+        'PATCH',
+        { status }
+      ).catch(() => {});
     },
-    [appendAuditLog, user]
+    [appendAuditLog]
   );
 
   const assignUserRole = useCallback(
@@ -1371,30 +1159,20 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'ROLE_ASSIGNED',
-        'staffRoles',
+        'staff_roles',
         uid,
         `Assigned role "${role}" to ${email}.`
       );
-      if (user) {
-        if (role === 'user') {
-          void deleteDoc(doc(db, 'staffRoles', uid)).catch(() => {});
-        } else {
-          void setDoc(doc(db, 'staffRoles', uid), {
-            uid,
-            email,
-            displayName,
-            role,
-            assignedBy: user.email ?? actor.email,
-            active: true,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          }).catch(() => {});
-        }
-        void updateDoc(doc(db, 'userDirectory', uid), {
+      void supabaseCmsRequest(
+        `/api/supabase/cms/staff-roles/${encodeURIComponent(uid)}`,
+        'PUT',
+        {
+          email,
+          displayName,
           role,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+          assignedBy: user?.email ?? actor.email,
+        }
+      ).catch(() => {});
     },
     [appendAuditLog, user]
   );
@@ -1411,18 +1189,17 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'USER_STATUS_CHANGED',
-        'userDirectory',
+        'user_directory',
         uid,
         `Marked account ${uid} as ${status}.`
       );
-      if (user) {
-        void updateDoc(doc(db, 'userDirectory', uid), {
-          status,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+      void supabaseCmsRequest(
+        `/api/supabase/cms/users/${encodeURIComponent(uid)}/status`,
+        'PATCH',
+        { status }
+      ).catch(() => {});
     },
-    [appendAuditLog, user]
+    [appendAuditLog]
   );
 
   // Mobile Studio -> Community Text-Only AI Moderated Post Creation
@@ -1447,17 +1224,18 @@ export function useBackendStore(user: User | null) {
 
       const postId = `post-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       const nowIso = new Date().toISOString();
-      const initials = author.displayName
-        .split(/\s+/)
-        .map((w) => w[0] ?? '')
-        .join('')
-        .slice(0, 2)
-        .toUpperCase() || 'CR';
+      const initials =
+        author.displayName
+          .split(/\s+/)
+          .map((w) => w[0] ?? '')
+          .join('')
+          .slice(0, 2)
+          .toUpperCase() || 'CR';
       const handle = `@${author.email.split('@')[0].replace(/[^a-z0-9._-]/gi, '').slice(0, 20)}`;
 
       const post: ModerationCommunityPost = {
         id: postId,
-        authorId: author.uid,
+        authorId: user?.uid ?? author.uid,
         authorName: author.displayName,
         authorHandle: handle,
         authorInitials: initials,
@@ -1477,23 +1255,11 @@ export function useBackendStore(user: User | null) {
         communityPosts: [post, ...prev.communityPosts],
       }));
 
-      if (user) {
-        void setDoc(doc(db, 'communityPosts', postId), {
-          authorId: user.uid,
-          authorName: post.authorName,
-          authorHandle: post.authorHandle,
-          authorInitials: post.authorInitials,
-          authorTone: post.authorTone,
-          tag: post.tag,
-          content: post.content,
-          bookId: post.bookId,
-          chapterId: post.chapterId,
-          likesCount: 0,
-          moderationStatus: 'approved',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+      void supabaseCmsRequest(
+        `/api/supabase/cms/community-posts/${encodeURIComponent(postId)}`,
+        'PUT',
+        { post }
+      ).catch(() => {});
 
       return { ...verdict, post };
     },
@@ -1512,18 +1278,17 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         moderationStatus === 'removed' ? 'COMMUNITY_POST_REMOVED' : 'COMMUNITY_POST_RESTORED',
-        'communityPosts',
+        'community_posts',
         postId,
         `Set community post ${postId} moderation status to ${moderationStatus}.`
       );
-      if (user) {
-        void updateDoc(doc(db, 'communityPosts', postId), {
-          moderationStatus,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+      void supabaseCmsRequest(
+        `/api/supabase/cms/community-posts/${encodeURIComponent(postId)}/moderate`,
+        'PATCH',
+        { moderationStatus }
+      ).catch(() => {});
     },
-    [appendAuditLog, user]
+    [appendAuditLog]
   );
 
   const createSupportTicket = useCallback(
@@ -1535,9 +1300,9 @@ export function useBackendStore(user: User | null) {
       const nowIso = new Date().toISOString();
       const ticket: SupportTicket = {
         id: ticketId,
-        userId: author.uid,
-        userEmail: author.email,
-        userName: author.displayName,
+        userId: user?.uid ?? author.uid,
+        userEmail: user?.email ?? author.email,
+        userName: user?.displayName ?? author.displayName,
         category: input.category,
         subject: input.subject.trim(),
         description: input.description.trim(),
@@ -1553,22 +1318,11 @@ export function useBackendStore(user: User | null) {
         supportTickets: [ticket, ...prev.supportTickets],
       }));
 
-      if (user) {
-        void setDoc(doc(db, 'supportTickets', ticketId), {
-          userId: user.uid,
-          userEmail: user.email ?? author.email,
-          userName: user.displayName ?? author.displayName,
-          category: ticket.category,
-          subject: ticket.subject,
-          description: ticket.description,
-          status: 'open',
-          priority: ticket.priority,
-          assignedTo: '',
-          resolutionNote: '',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+      void supabaseCmsRequest(
+        `/api/supabase/cms/support-tickets/${encodeURIComponent(ticketId)}`,
+        'PUT',
+        { ticket }
+      ).catch(() => {});
       return ticket;
     },
     [user]
@@ -1597,18 +1351,17 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'TICKET_UPDATED',
-        'supportTickets',
+        'support_tickets',
         ticketId,
         `Updated support ticket ${ticketId} (status: ${updates.status ?? 'unchanged'}).`
       );
-      if (user) {
-        void updateDoc(doc(db, 'supportTickets', ticketId), {
-          ...updates,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+      void supabaseCmsRequest(
+        `/api/supabase/cms/support-tickets/${encodeURIComponent(ticketId)}`,
+        'PATCH',
+        updates
+      ).catch(() => {});
     },
-    [appendAuditLog, user]
+    [appendAuditLog]
   );
 
   const upsertSourceRight = useCallback(
@@ -1627,10 +1380,15 @@ export function useBackendStore(user: User | null) {
       appendAuditLog(
         actor,
         'SOURCE_RIGHT_SAVED',
-        'sourcesRights',
+        'sources_rights',
         record.id,
         `Updated citation & rights for "${record.bookTitle}" (${record.licenseType}).`
       );
+      void supabaseCmsRequest(
+        `/api/supabase/cms/sources-rights/${encodeURIComponent(record.id)}`,
+        'PUT',
+        { record: next }
+      ).catch(() => {});
     },
     [appendAuditLog]
   );
@@ -1638,34 +1396,26 @@ export function useBackendStore(user: User | null) {
   const updateSystemSettings = useCallback(
     (updates: Partial<SystemSettingsRecord>, actor: StaffActor) => {
       const nowIso = new Date().toISOString();
+      const merged: SystemSettingsRecord = {
+        ...state.systemSettings,
+        ...updates,
+        updatedBy: user?.email ?? actor.email,
+        updatedAt: nowIso,
+      };
       setState((prev) => ({
         ...prev,
-        systemSettings: {
-          ...prev.systemSettings,
-          ...updates,
-          updatedBy: actor.email,
-          updatedAt: nowIso,
-        },
+        systemSettings: merged,
       }));
       appendAuditLog(
         actor,
         'SETTINGS_UPDATED',
-        'systemSettings',
+        'system_settings',
         'global',
         `Updated dashboard system settings (${Object.keys(updates).join(', ')}).`
       );
-      if (user) {
-        void setDoc(
-          doc(db, 'systemSettings', 'global'),
-          {
-            ...state.systemSettings,
-            ...updates,
-            updatedBy: user.email ?? actor.email,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        ).catch(() => {});
-      }
+      void supabaseCmsRequest('/api/supabase/cms/system-settings', 'PUT', {
+        settings: merged,
+      }).catch(() => {});
     },
     [appendAuditLog, state.systemSettings, user]
   );

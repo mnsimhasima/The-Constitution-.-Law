@@ -14,6 +14,8 @@ import { parseBulkBooksCsv, parseBulkBooksJson } from './src/utils/bulkImportPar
 import { INITIAL_LAW_BOOKS } from './src/data/booksData.ts';
 import { computeCatalogVersion } from './src/utils/bookIndexSync.ts';
 import { booksStructuresStore } from './src/server/ottCatalogStore.ts';
+import { getSupabaseRuntimeStatus } from './src/server/supabaseClient.ts';
+import { isValidRecordId, supabaseDataService } from './src/server/supabaseDataService.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -609,6 +611,119 @@ async function startServer() {
     }
   });
 
+  // Unified single-table `content_nodes` endpoints (chapters, articles, sections, and topics)
+  app.get('/api/books-structures/editions/:editionId/content-nodes', async (req, res) => {
+    try {
+      const includeDeleted = req.query.includeDeleted === 'true';
+      const rawType = typeof req.query.nodeType === 'string' ? req.query.nodeType : undefined;
+      const nodeType =
+        rawType === 'chapter' || rawType === 'article' || rawType === 'section' || rawType === 'topic'
+          ? rawType
+          : undefined;
+      const nodes = await booksStructuresStore.listContentNodes(req.params.editionId, {
+        includeDeleted,
+        nodeType,
+      });
+      res.status(200).json({ editionId: req.params.editionId, contentNodes: nodes });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to load unified content nodes.',
+      });
+    }
+  });
+
+  app.post('/api/books-structures/editions/:editionId/content-nodes', async (req, res) => {
+    try {
+      const rawType = req.body?.nodeType;
+      const nodeType =
+        rawType === 'chapter' || rawType === 'article' || rawType === 'section' || rawType === 'topic'
+          ? rawType
+          : 'article';
+      const node = await booksStructuresStore.createContentNode(req.params.editionId, {
+        nodeType,
+        parentNodeId: typeof req.body?.parentNodeId === 'string' ? req.body.parentNodeId : null,
+        nodeNumber: String(req.body?.nodeNumber ?? ''),
+        title: String(req.body?.title ?? ''),
+        definition: typeof req.body?.definition === 'string' ? req.body.definition : undefined,
+        purposeBackground:
+          typeof req.body?.purposeBackground === 'string' ? req.body.purposeBackground : undefined,
+        deepExplanation:
+          typeof req.body?.deepExplanation === 'string' ? req.body.deepExplanation : undefined,
+        practicalExamples:
+          typeof req.body?.practicalExamples === 'string' ? req.body.practicalExamples : undefined,
+        estimatedMinutes:
+          typeof req.body?.estimatedMinutes === 'number' ? req.body.estimatedMinutes : undefined,
+        overviewAudioUrl:
+          typeof req.body?.overviewAudioUrl === 'string' ? req.body.overviewAudioUrl : undefined,
+        definitionAudioUrl:
+          typeof req.body?.definitionAudioUrl === 'string' ? req.body.definitionAudioUrl : undefined,
+        purposeAudioUrl:
+          typeof req.body?.purposeAudioUrl === 'string' ? req.body.purposeAudioUrl : undefined,
+        explanationAudioUrl:
+          typeof req.body?.explanationAudioUrl === 'string' ? req.body.explanationAudioUrl : undefined,
+        examplesAudioUrl:
+          typeof req.body?.examplesAudioUrl === 'string' ? req.body.examplesAudioUrl : undefined,
+        fullAudioUrl:
+          typeof req.body?.fullAudioUrl === 'string' ? req.body.fullAudioUrl : undefined,
+        audioDurationSec:
+          typeof req.body?.audioDurationSec === 'number' ? req.body.audioDurationSec : undefined,
+      });
+      res.status(201).json({ contentNode: node });
+    } catch (err) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Could not create content node.',
+      });
+    }
+  });
+
+  app.patch('/api/books-structures/content-nodes/:nodeId', async (req, res) => {
+    try {
+      const node = await booksStructuresStore.updateContentNode(req.params.nodeId, {
+        nodeNumber: typeof req.body?.nodeNumber === 'string' ? req.body.nodeNumber : undefined,
+        title: typeof req.body?.title === 'string' ? req.body.title : undefined,
+        definition: typeof req.body?.definition === 'string' ? req.body.definition : undefined,
+        purposeBackground:
+          typeof req.body?.purposeBackground === 'string' ? req.body.purposeBackground : undefined,
+        deepExplanation:
+          typeof req.body?.deepExplanation === 'string' ? req.body.deepExplanation : undefined,
+        practicalExamples:
+          typeof req.body?.practicalExamples === 'string' ? req.body.practicalExamples : undefined,
+        estimatedMinutes:
+          typeof req.body?.estimatedMinutes === 'number' ? req.body.estimatedMinutes : undefined,
+        overviewAudioUrl:
+          typeof req.body?.overviewAudioUrl === 'string' ? req.body.overviewAudioUrl : undefined,
+        definitionAudioUrl:
+          typeof req.body?.definitionAudioUrl === 'string' ? req.body.definitionAudioUrl : undefined,
+        purposeAudioUrl:
+          typeof req.body?.purposeAudioUrl === 'string' ? req.body.purposeAudioUrl : undefined,
+        explanationAudioUrl:
+          typeof req.body?.explanationAudioUrl === 'string' ? req.body.explanationAudioUrl : undefined,
+        examplesAudioUrl:
+          typeof req.body?.examplesAudioUrl === 'string' ? req.body.examplesAudioUrl : undefined,
+        fullAudioUrl:
+          typeof req.body?.fullAudioUrl === 'string' ? req.body.fullAudioUrl : undefined,
+        audioDurationSec:
+          typeof req.body?.audioDurationSec === 'number' ? req.body.audioDurationSec : undefined,
+      });
+      res.status(200).json({ contentNode: node });
+    } catch (err) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Could not update content node.',
+      });
+    }
+  });
+
+  app.delete('/api/books-structures/content-nodes/:nodeId', async (req, res) => {
+    try {
+      const result = await booksStructuresStore.softDeleteContentNode(req.params.nodeId);
+      res.status(200).json(result);
+    } catch (err) {
+      res.status(404).json({
+        error: err instanceof Error ? err.message : 'Content node not found.',
+      });
+    }
+  });
+
   // Mobile App Incremental Delta-Sync Endpoint
   app.post('/api/books-structures/sync/delta', async (req, res) => {
     try {
@@ -622,6 +737,386 @@ async function startServer() {
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : 'Delta-Sync failed.' });
     }
+  });
+
+  // =========================================================================
+  // SUPABASE POSTGRESQL CMS & READER SYNC APIs (Replaces Firebase Firestore)
+  // =========================================================================
+
+  app.get('/api/supabase/health', (_req, res) => {
+    res.status(200).json(getSupabaseRuntimeStatus());
+  });
+
+  app.get('/api/supabase/cms/bootstrap', async (_req, res) => {
+    try {
+      const payload = await supabaseDataService.getCmsBootstrap();
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).json(payload);
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to load CMS data from Supabase.',
+      });
+    }
+  });
+
+  app.put('/api/supabase/cms/books/:bookId', async (req, res) => {
+    try {
+      const bookId = req.params.bookId;
+      if (!isValidRecordId(bookId) || !req.body?.book) {
+        res.status(400).json({ error: 'Invalid CMS book payload.' });
+        return;
+      }
+      const saved = await supabaseDataService.upsertCmsBook({ ...req.body.book, id: bookId });
+      res.status(200).json({ book: saved });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save CMS book.' });
+    }
+  });
+
+  app.patch('/api/supabase/cms/books/:bookId/review', async (req, res) => {
+    try {
+      const bookId = req.params.bookId;
+      if (!isValidRecordId(bookId)) {
+        res.status(400).json({ error: 'Invalid book ID.' });
+        return;
+      }
+      await supabaseDataService.reviewCmsBook(
+        bookId,
+        req.body?.status,
+        String(req.body?.reviewedByEmail ?? ''),
+        String(req.body?.reviewNotes ?? '')
+      );
+      res.status(200).json({ updated: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update review status.' });
+    }
+  });
+
+  app.delete('/api/supabase/cms/books/:bookId', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.bookId)) {
+        res.status(400).json({ error: 'Invalid book ID.' });
+        return;
+      }
+      await supabaseDataService.deleteCmsBook(req.params.bookId);
+      res.status(200).json({ deleted: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to delete book.' });
+    }
+  });
+
+  app.put('/api/supabase/cms/content-audio/:audioId', async (req, res) => {
+    try {
+      const audioId = req.params.audioId;
+      if (!isValidRecordId(audioId) || !req.body?.record) {
+        res.status(400).json({ error: 'Invalid audio metadata payload.' });
+        return;
+      }
+      const saved = await supabaseDataService.upsertContentAudioMetadata({
+        ...req.body.record,
+        id: audioId,
+      });
+      res.status(200).json({ record: saved });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save audio metadata.' });
+    }
+  });
+
+  app.patch('/api/supabase/cms/content-audio/:audioId/status', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.audioId)) {
+        res.status(400).json({ error: 'Invalid audio ID.' });
+        return;
+      }
+      await supabaseDataService.updateContentAudioStatus(req.params.audioId, req.body?.status);
+      res.status(200).json({ updated: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update audio status.' });
+    }
+  });
+
+  app.delete('/api/supabase/cms/content-audio/:audioId', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.audioId)) {
+        res.status(400).json({ error: 'Invalid audio ID.' });
+        return;
+      }
+      await supabaseDataService.deleteContentAudioMetadata(req.params.audioId);
+      res.status(200).json({ deleted: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to delete audio metadata.' });
+    }
+  });
+
+  app.put('/api/supabase/cms/audio-tracks/:trackId', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.trackId) || !req.body?.track) {
+        res.status(400).json({ error: 'Invalid audio track payload.' });
+        return;
+      }
+      const saved = await supabaseDataService.upsertAudioTrack({
+        ...req.body.track,
+        id: req.params.trackId,
+      });
+      res.status(200).json({ track: saved });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save audio track.' });
+    }
+  });
+
+  app.patch('/api/supabase/cms/audio-tracks/:trackId/status', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.trackId)) {
+        res.status(400).json({ error: 'Invalid track ID.' });
+        return;
+      }
+      await supabaseDataService.updateAudioTrackStatus(req.params.trackId, req.body?.status);
+      res.status(200).json({ updated: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update track status.' });
+    }
+  });
+
+  app.put('/api/supabase/cms/users/:uid', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.uid) || !req.body?.entry) {
+        res.status(400).json({ error: 'Invalid user directory payload.' });
+        return;
+      }
+      await supabaseDataService.upsertUserDirectoryEntry({
+        ...req.body.entry,
+        uid: req.params.uid,
+      });
+      res.status(200).json({ saved: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save user directory entry.' });
+    }
+  });
+
+  app.put('/api/supabase/cms/staff-roles/:uid', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.uid)) {
+        res.status(400).json({ error: 'Invalid user ID.' });
+        return;
+      }
+      await supabaseDataService.assignStaffRole({
+        uid: req.params.uid,
+        email: String(req.body?.email ?? ''),
+        displayName: String(req.body?.displayName ?? ''),
+        role: req.body?.role ?? 'user',
+        assignedBy: String(req.body?.assignedBy ?? 'admin'),
+      });
+      res.status(200).json({ saved: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to assign role.' });
+    }
+  });
+
+  app.patch('/api/supabase/cms/users/:uid/status', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.uid)) {
+        res.status(400).json({ error: 'Invalid user ID.' });
+        return;
+      }
+      await supabaseDataService.updateUserAccountStatus(req.params.uid, req.body?.status);
+      res.status(200).json({ updated: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update account status.' });
+    }
+  });
+
+  app.put('/api/supabase/cms/community-posts/:postId', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.postId) || !req.body?.post) {
+        res.status(400).json({ error: 'Invalid community post payload.' });
+        return;
+      }
+      const saved = await supabaseDataService.upsertCommunityPost({
+        ...req.body.post,
+        id: req.params.postId,
+      });
+      res.status(200).json({ post: saved });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save community post.' });
+    }
+  });
+
+  app.patch('/api/supabase/cms/community-posts/:postId/moderate', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.postId)) {
+        res.status(400).json({ error: 'Invalid post ID.' });
+        return;
+      }
+      await supabaseDataService.moderateCommunityPost(req.params.postId, req.body?.moderationStatus);
+      res.status(200).json({ updated: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to moderate post.' });
+    }
+  });
+
+  app.put('/api/supabase/cms/support-tickets/:ticketId', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.ticketId) || !req.body?.ticket) {
+        res.status(400).json({ error: 'Invalid support ticket payload.' });
+        return;
+      }
+      const saved = await supabaseDataService.upsertSupportTicket({
+        ...req.body.ticket,
+        id: req.params.ticketId,
+      });
+      res.status(200).json({ ticket: saved });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save support ticket.' });
+    }
+  });
+
+  app.patch('/api/supabase/cms/support-tickets/:ticketId', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.ticketId)) {
+        res.status(400).json({ error: 'Invalid ticket ID.' });
+        return;
+      }
+      await supabaseDataService.updateSupportTicket(req.params.ticketId, req.body ?? {});
+      res.status(200).json({ updated: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to update support ticket.' });
+    }
+  });
+
+  app.post('/api/supabase/cms/audit-logs', async (req, res) => {
+    try {
+      if (!req.body?.entry || !isValidRecordId(String(req.body.entry.id ?? ''))) {
+        res.status(400).json({ error: 'Invalid audit log payload.' });
+        return;
+      }
+      await supabaseDataService.appendAuditLog(req.body.entry);
+      res.status(201).json({ saved: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save audit log.' });
+    }
+  });
+
+  app.put('/api/supabase/cms/sources-rights/:recordId', async (req, res) => {
+    try {
+      if (!isValidRecordId(req.params.recordId) || !req.body?.record) {
+        res.status(400).json({ error: 'Invalid source/rights payload.' });
+        return;
+      }
+      const saved = await supabaseDataService.upsertSourceRight({
+        ...req.body.record,
+        id: req.params.recordId,
+      });
+      res.status(200).json({ record: saved });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save source record.' });
+    }
+  });
+
+  app.put('/api/supabase/cms/system-settings', async (req, res) => {
+    try {
+      if (!req.body?.settings) {
+        res.status(400).json({ error: 'Invalid system settings payload.' });
+        return;
+      }
+      const saved = await supabaseDataService.upsertSystemSettings(req.body.settings);
+      res.status(200).json({ settings: saved });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save system settings.' });
+    }
+  });
+
+  // Reader Private Sync Endpoints (Replaces Firestore /users/{uid}/*)
+  app.get('/api/supabase/user/:uid/state', async (req, res) => {
+    try {
+      const payload = await supabaseDataService.getUserCloudState(req.params.uid);
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).json(payload);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to load reader cloud state.' });
+    }
+  });
+
+  app.put('/api/supabase/user/:uid/profile', async (req, res) => {
+    try {
+      const profile = await supabaseDataService.upsertUserProfile(req.params.uid, req.body ?? {});
+      res.status(200).json({ profile });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save reader profile.' });
+    }
+  });
+
+  app.put('/api/supabase/user/:uid/notes/:noteId', async (req, res) => {
+    try {
+      const note = await supabaseDataService.upsertUserNote(req.params.uid, {
+        id: req.params.noteId,
+        clauseKey: String(req.body?.clauseKey ?? ''),
+        bookId: String(req.body?.bookId ?? ''),
+        chapterId: String(req.body?.chapterId ?? ''),
+        clauseId: String(req.body?.clauseId ?? ''),
+        content: String(req.body?.content ?? ''),
+      });
+      res.status(200).json({ note });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save note.' });
+    }
+  });
+
+  app.delete('/api/supabase/user/:uid/notes/:noteId', async (req, res) => {
+    try {
+      await supabaseDataService.deleteUserNote(req.params.uid, req.params.noteId);
+      res.status(200).json({ deleted: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to delete note.' });
+    }
+  });
+
+  app.put('/api/supabase/user/:uid/annotations/:annId', async (req, res) => {
+    try {
+      await supabaseDataService.upsertUserAnnotation(req.params.uid, {
+        id: req.params.annId,
+        clauseKey: String(req.body?.clauseKey ?? ''),
+        bookId: String(req.body?.bookId ?? ''),
+        chapterId: String(req.body?.chapterId ?? ''),
+        clauseId: String(req.body?.clauseId ?? ''),
+        kind: req.body?.kind === 'bookmark' ? 'bookmark' : 'highlight',
+        color: req.body?.color ?? 'none',
+      });
+      res.status(200).json({ saved: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save annotation.' });
+    }
+  });
+
+  app.delete('/api/supabase/user/:uid/annotations/:annId', async (req, res) => {
+    try {
+      await supabaseDataService.deleteUserAnnotation(req.params.uid, req.params.annId);
+      res.status(200).json({ deleted: true });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to delete annotation.' });
+    }
+  });
+
+  app.post('/api/supabase/user/:uid/custom-books/:bookId', async (req, res) => {
+    try {
+      if (!req.body?.book) {
+        res.status(400).json({ error: 'Book payload required.' });
+        return;
+      }
+      const saved = await supabaseDataService.upsertUserCustomBook(req.params.uid, {
+        ...req.body.book,
+        id: req.params.bookId,
+      });
+      res.status(201).json({ book: saved });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save custom book.' });
+    }
+  });
+
+  // Strict JSON 404 for unknown /api/* routes (including removed legacy /api/ott/* and /api/tts)
+  app.all('/api/*', (_req, res) => {
+    res.status(404).json({
+      error: 'API route not found. All catalog, audio, delta-sync, and Supabase endpoints are served under /api/books-structures/* and /api/supabase/*.',
+    });
   });
 
   // Frontend Vite middleware in dev OR built static assets in prod

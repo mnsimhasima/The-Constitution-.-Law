@@ -432,6 +432,141 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "MasterBook": {
+      "title": "MasterBook",
+      "description": "Unified Books & Structures parent grouping for Constitutional, General Law, and Biography books with inline sync versioning.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "slug": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "bookType": { "type": "string", "enum": ["constitutional", "general_law", "biography"] },
+        "canonicalTitle": { "type": "string", "minLength": 2, "maxLength": 240 },
+        "jurisdiction": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "enactmentYear": { "type": "string", "maxLength": 32 },
+        "coverImageUrl": { "type": "string", "maxLength": 500 },
+        "coverTone": { "type": "string", "enum": ["cobalt", "sapphire", "slate", "emerald", "amber", "obsidian"] },
+        "versionNumber": { "type": "number" },
+        "isDeleted": { "type": "boolean" },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "slug",
+        "bookType",
+        "canonicalTitle",
+        "jurisdiction",
+        "enactmentYear",
+        "coverImageUrl",
+        "coverTone",
+        "versionNumber",
+        "isDeleted",
+        "createdByUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "BookEdition": {
+      "title": "BookEdition",
+      "description": "Manually authored language variant under a MasterBook with independent text, 1-to-1 overview audio, and inline Delta-Sync version metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "masterBookId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "languageCode": { "type": "string", "enum": ["en", "te", "kn", "ta", "ml", "hi", "es", "fr", "ar"] },
+        "languageName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "nativeLanguageName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 260 },
+        "subtitle": { "type": "string", "maxLength": 400 },
+        "description": { "type": "string", "maxLength": 4000 },
+        "descriptionAudioUrl": { "type": "string", "maxLength": 500 },
+        "coverImageUrl": { "type": "string", "maxLength": 500 },
+        "narratorName": { "type": "string", "maxLength": 140 },
+        "status": { "type": "string", "enum": ["draft", "in_review", "published", "archived"] },
+        "versionNumber": { "type": "number" },
+        "isDeleted": { "type": "boolean" },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "masterBookId",
+        "languageCode",
+        "languageName",
+        "nativeLanguageName",
+        "title",
+        "subtitle",
+        "description",
+        "descriptionAudioUrl",
+        "coverImageUrl",
+        "narratorName",
+        "status",
+        "versionNumber",
+        "isDeleted",
+        "createdByUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ContentNode": {
+      "title": "ContentNode",
+      "description": "Single unified hierarchical content node (chapter, article, section, or topic) with 1-to-1 manual audio URLs and inline Delta-Sync versioning.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "editionId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "parentNodeId": { "type": "string", "maxLength": 128 },
+        "nodeType": { "type": "string", "enum": ["chapter", "article", "section", "topic"] },
+        "nodeOrder": { "type": "number" },
+        "nodeNumber": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 260 },
+        "definition": { "type": "string", "maxLength": 8000 },
+        "purposeBackground": { "type": "string", "maxLength": 8000 },
+        "deepExplanation": { "type": "string", "maxLength": 8000 },
+        "practicalExamples": { "type": "string", "maxLength": 8000 },
+        "estimatedMinutes": { "type": "number" },
+        "overviewAudioUrl": { "type": "string", "maxLength": 500 },
+        "definitionAudioUrl": { "type": "string", "maxLength": 500 },
+        "purposeAudioUrl": { "type": "string", "maxLength": 500 },
+        "explanationAudioUrl": { "type": "string", "maxLength": 500 },
+        "examplesAudioUrl": { "type": "string", "maxLength": 500 },
+        "fullAudioUrl": { "type": "string", "maxLength": 500 },
+        "audioDurationSec": { "type": "number" },
+        "versionNumber": { "type": "number" },
+        "isDeleted": { "type": "boolean" },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "editionId",
+        "parentNodeId",
+        "nodeType",
+        "nodeOrder",
+        "nodeNumber",
+        "title",
+        "definition",
+        "purposeBackground",
+        "deepExplanation",
+        "practicalExamples",
+        "estimatedMinutes",
+        "overviewAudioUrl",
+        "definitionAudioUrl",
+        "purposeAudioUrl",
+        "explanationAudioUrl",
+        "examplesAudioUrl",
+        "fullAudioUrl",
+        "audioDurationSec",
+        "versionNumber",
+        "isDeleted",
+        "createdByUid",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -490,6 +625,18 @@
     "/systemSettings/{settingId}": {
       "schema": { "$ref": "#/entities/SystemSetting" },
       "description": "Global CMS workflow and moderation settings."
+    },
+    "/masterBooks/{masterBookId}": {
+      "schema": { "$ref": "#/entities/MasterBook" },
+      "description": "Unified Master Book parent groups (Constitutional, General Law, Biography) with inline versioning."
+    },
+    "/bookEditions/{editionId}": {
+      "schema": { "$ref": "#/entities/BookEdition" },
+      "description": "Manually authored language editions linked to a MasterBook with inline versioning."
+    },
+    "/contentNodes/{nodeId}": {
+      "schema": { "$ref": "#/entities/ContentNode" },
+      "description": "Single unified hierarchical collection for chapters, articles, sections, and topics with inline versioning and 1-to-1 manual audio URLs."
     }
   }
 }

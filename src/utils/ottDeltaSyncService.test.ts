@@ -220,6 +220,25 @@ test('End-to-end Offline Download + CMS adds Chapter 3, updates Chapter 2, soft-
       deepExplanation: 'Part of Directive Principles intended to harmonize civil rights progressively.',
       practicalExamples: 'Discussed extensively in constitutional debates on family law reform.',
     });
+    const sampleAudioBase64 = Buffer.from('RIFF----WAVEfmt manual-audio-bytes').toString('base64');
+    const ch3Upload = await serverStore.saveUploadedAudio({
+      entityType: 'chapter',
+      entityId: ch3.id,
+      blockRole: 'chapter_overview',
+      originalFilename: 'ch3-overview.wav',
+      mimeType: 'audio/wav',
+      base64Data: sampleAudioBase64,
+      durationSec: 42,
+    });
+    const art44Upload = await serverStore.saveUploadedAudio({
+      entityType: 'legal_unit',
+      entityId: art44.id,
+      blockRole: 'unit_full',
+      originalFilename: 'article-44-full.wav',
+      mimeType: 'audio/wav',
+      base64Data: sampleAudioBase64,
+      durationSec: 85,
+    });
     await serverStore.updateChapter('ch-coi-en-2', {
       overviewDefinition: 'Updated Chapter 2 overview after CMS revision.',
     });
@@ -254,8 +273,8 @@ test('End-to-end Offline Download + CMS adds Chapter 3, updates Chapter 2, soft-
     assert.ok(!refreshedPkg.units.some((u) => u.id === unitToDelete.id));
     assert.equal(await clientVault.getAudioBlob(deletedUnitAudioUrl), null);
 
-    const ch3Audio = await clientVault.getAudioBlob(ch3.overviewAudioUrl!);
-    const art44Audio = await clientVault.getAudioBlob(art44.fullUnitAudioUrl!);
+    const ch3Audio = await clientVault.getAudioBlob(ch3Upload.storageUrl);
+    const art44Audio = await clientVault.getAudioBlob(art44Upload.storageUrl);
     assert.ok(ch3Audio && ch3Audio.byteSize > 0);
     assert.ok(art44Audio && art44Audio.byteSize > 0);
 

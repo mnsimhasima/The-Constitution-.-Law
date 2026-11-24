@@ -147,7 +147,7 @@ export function OttLibraryExplorer({
       const localPkgs = await refreshOfflinePackages();
 
       try {
-        const resp = await fetch('/api/ott/master-books');
+        const resp = await fetch('/api/books-structures/master-books');
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = (await resp.json()) as { masterBooks: OttMasterBookWithEditions[] };
         setMasterBooks(data.masterBooks);
@@ -237,7 +237,7 @@ export function OttLibraryExplorer({
     async (editionId: string) => {
       if (!editionId) return;
       try {
-        const resp = await fetch(`/api/ott/editions/${encodeURIComponent(editionId)}`);
+        const resp = await fetch(`/api/books-structures/editions/${encodeURIComponent(editionId)}`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const tree = (await resp.json()) as OttEditionDetailTree;
         setEditionTree(tree);
@@ -446,7 +446,13 @@ export function OttLibraryExplorer({
     }
   };
 
-  const unitLabel = editionTree?.masterBook.bookType === 'general_law' ? 'Section' : 'Article';
+  const activeBookType = editionTree?.masterBook.bookType ?? 'constitutional';
+  const unitLabel =
+    activeBookType === 'general_law'
+      ? 'Section'
+      : activeBookType === 'biography'
+        ? 'Topic'
+        : 'Article';
 
   return (
     <div className="min-w-0 space-y-5">
@@ -504,11 +510,17 @@ export function OttLibraryExplorer({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {loading ? (
           <div className="col-span-full rounded-2xl border border-slate-200 bg-white p-6 text-center text-xs text-slate-500 dark:border-slate-800 dark:bg-[#121620] dark:text-slate-400">
-            Loading multi-language OTT catalog...
+            Loading Books &amp; Structures catalog…
           </div>
         ) : (
           masterBooks.map((mb) => {
             const selected = mb.id === selectedMasterId;
+            const bookTypeLabel =
+              mb.bookType === 'constitutional'
+                ? 'Constitutional Law'
+                : mb.bookType === 'general_law'
+                  ? 'General Law'
+                  : 'Biography / General';
             return (
               <button
                 key={mb.id}
@@ -529,8 +541,7 @@ export function OttLibraryExplorer({
               >
                 <div>
                   <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-blue-600 dark:text-blue-400">
-                    {mb.bookType === 'constitutional' ? 'Constitutional Law' : 'General Law'} ·{' '}
-                    {mb.jurisdiction} · {mb.enactmentYear}
+                    {bookTypeLabel} · {mb.jurisdiction} · {mb.enactmentYear}
                   </p>
                   <h2 className="mt-1 font-display text-base font-bold text-slate-950 dark:text-white">
                     {mb.canonicalTitle}
@@ -853,12 +864,12 @@ export function OttLibraryExplorer({
                       )}
                     </div>
 
-                    {/* Structured Legal Text Blocks with Individual Play Controls */}
+                    {/* Structured Content Blocks with Individual 1-to-1 Manual Audio Controls */}
                     <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">
-                            Definition
+                            {activeBookType === 'biography' ? 'Main Content' : 'Definition'}
                           </p>
                           {unit.definitionAudioUrl && (
                             <button
@@ -866,7 +877,7 @@ export function OttLibraryExplorer({
                               onClick={() =>
                                 void handlePlayAudioBlock(
                                   unit.definitionAudioUrl,
-                                  `${unit.unitNumber} · Definition`,
+                                  `${unit.unitNumber} · ${activeBookType === 'biography' ? 'Main Content' : 'Definition'}`,
                                   unit.title
                                 )
                               }
@@ -885,7 +896,9 @@ export function OttLibraryExplorer({
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">
-                            Why It Was Introduced
+                            {activeBookType === 'biography'
+                              ? 'Historical Context'
+                              : 'Why It Was Introduced'}
                           </p>
                           {unit.purposeAudioUrl && (
                             <button
@@ -893,7 +906,7 @@ export function OttLibraryExplorer({
                               onClick={() =>
                                 void handlePlayAudioBlock(
                                   unit.purposeAudioUrl,
-                                  `${unit.unitNumber} · Purpose & Background`,
+                                  `${unit.unitNumber} · ${activeBookType === 'biography' ? 'Historical Context' : 'Purpose & Background'}`,
                                   unit.title
                                 )
                               }
@@ -912,7 +925,7 @@ export function OttLibraryExplorer({
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">
-                            Deep Explanation
+                            {activeBookType === 'biography' ? 'Study Notes' : 'Deep Explanation'}
                           </p>
                           {unit.explanationAudioUrl && (
                             <button
@@ -920,7 +933,7 @@ export function OttLibraryExplorer({
                               onClick={() =>
                                 void handlePlayAudioBlock(
                                   unit.explanationAudioUrl,
-                                  `${unit.unitNumber} · Deep Explanation`,
+                                  `${unit.unitNumber} · ${activeBookType === 'biography' ? 'Study Notes' : 'Deep Explanation'}`,
                                   unit.title
                                 )
                               }
@@ -939,7 +952,11 @@ export function OttLibraryExplorer({
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-500 dark:text-slate-400">
-                            {unitLabel === 'Article' ? 'Practical Examples' : 'Case Examples'}
+                            {activeBookType === 'biography'
+                              ? 'Key Milestones & Highlights'
+                              : unitLabel === 'Article'
+                                ? 'Practical Examples'
+                                : 'Case Examples'}
                           </p>
                           {unit.examplesAudioUrl && (
                             <button
@@ -947,7 +964,7 @@ export function OttLibraryExplorer({
                               onClick={() =>
                                 void handlePlayAudioBlock(
                                   unit.examplesAudioUrl,
-                                  `${unit.unitNumber} · Examples`,
+                                  `${unit.unitNumber} · ${activeBookType === 'biography' ? 'Milestones' : 'Examples'}`,
                                   unit.title
                                 )
                               }

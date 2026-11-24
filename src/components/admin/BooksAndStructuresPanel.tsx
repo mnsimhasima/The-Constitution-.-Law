@@ -246,7 +246,7 @@ function ManualAudioUploadSlot({
       {firestoreRecord && (
         <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-slate-200/70 pt-1.5 font-mono text-[10px] text-slate-500">
           <span className="truncate">
-            Firestore: contentAudioMetadata/{firestoreRecord.id} · {firestoreRecord.fileName} (
+            Supabase S3: content_audio_metadata/{firestoreRecord.id} · {firestoreRecord.fileName} (
             {firestoreRecord.durationLabel} · {formatAudioFileSize(firestoreRecord.byteSize)})
           </span>
           <span
@@ -255,7 +255,7 @@ function ManualAudioUploadSlot({
             }`}
           >
             {firestoreRecord.firestoreSynced
-              ? 'Firestore Synced'
+              ? 'Supabase Synced'
               : isFirebaseSignedIn
                 ? 'Linked'
                 : 'Linked Locally'}
@@ -353,8 +353,8 @@ export function BooksAndStructuresPanel({
   const [editChapter, setEditChapter] = useState<{
     chapterNumber: string;
     title: string;
-    overview: string;
-  }>({ chapterNumber: '', title: '', overview: '' });
+    overviewDefinition: string;
+  }>({ chapterNumber: '', title: '', overviewDefinition: '' });
 
   const [editUnit, setEditUnit] = useState<{
     unitNumber: string;
@@ -435,7 +435,7 @@ export function BooksAndStructuresPanel({
           (ed) =>
             ed.title.toLowerCase().includes(q) ||
             ed.languageName.toLowerCase().includes(q) ||
-            ed.languageNativeName.toLowerCase().includes(q)
+            ed.nativeLanguageName.toLowerCase().includes(q)
         )
       );
     });
@@ -467,7 +467,7 @@ export function BooksAndStructuresPanel({
     }
   }, [selectedEditionId, loadEditionTree]);
 
-  const activeChapter: OttChapter | null = useMemo(() => {
+  const activeChapter: (OttChapter & { units: OttLegalUnit[] }) | null = useMemo(() => {
     if (!editionTree) return null;
     return editionTree.chapters.find((c) => c.id === selectedChapterId) ?? editionTree.chapters[0] ?? null;
   }, [editionTree, selectedChapterId]);
@@ -477,7 +477,7 @@ export function BooksAndStructuresPanel({
       setEditChapter({
         chapterNumber: activeChapter.chapterNumber,
         title: activeChapter.title,
-        overview: activeChapter.overview,
+        overviewDefinition: activeChapter.overviewDefinition,
       });
       setSelectedUnitId((prev) =>
         prev && activeChapter.units.some((u) => u.id === prev)
@@ -485,7 +485,7 @@ export function BooksAndStructuresPanel({
           : activeChapter.units[0]?.id ?? ''
       );
     } else {
-      setEditChapter({ chapterNumber: '', title: '', overview: '' });
+      setEditChapter({ chapterNumber: '', title: '', overviewDefinition: '' });
       setSelectedUnitId('');
     }
   }, [activeChapter]);
@@ -694,7 +694,7 @@ export function BooksAndStructuresPanel({
           return {
             languageCode: langMeta.code,
             languageName: langMeta.name,
-            languageNativeName: langMeta.nativeName,
+            nativeLanguageName: langMeta.nativeName,
             title: row.title.trim() || newMasterTitle.trim(),
             subtitle: row.subtitle.trim() || undefined,
             description:
@@ -720,18 +720,18 @@ export function BooksAndStructuresPanel({
         canonicalTitle: newMasterTitle.trim(),
         bookType: newMasterType,
         jurisdiction: newMasterJurisdiction.trim() || 'Republic of India',
-        year: Number(newMasterYear) || new Date().getFullYear(),
+        enactmentYear: String(newMasterYear || new Date().getFullYear()),
         editions: cleanedEditions,
       };
 
       if (includeInitialStructure && draftChapterTitle.trim()) {
-        payload.initialChapter = {
+        payload.chapter = {
           chapterNumber: draftChapterNumber.trim() || 'Chapter 1',
           title: draftChapterTitle.trim(),
-          overview: draftChapterOverview.trim(),
+          overviewDefinition: draftChapterOverview.trim(),
         };
         if (cleanedUnits.length > 0) {
-          payload.initialUnits = cleanedUnits;
+          payload.units = cleanedUnits;
         }
       }
 
@@ -810,7 +810,7 @@ export function BooksAndStructuresPanel({
           masterBookId: selectedMasterBook.id,
           languageCode: langMeta.code,
           languageName: langMeta.name,
-          languageNativeName: langMeta.nativeName,
+          nativeLanguageName: langMeta.nativeName,
           title: newEditionTitle.trim(),
           subtitle: newEditionSubtitle.trim() || undefined,
           description:
@@ -859,7 +859,7 @@ export function BooksAndStructuresPanel({
           body: JSON.stringify({
             chapterNumber: newChapterNumber.trim(),
             title: newChapterTitle.trim(),
-            overview: newChapterOverview.trim(),
+            overviewDefinition: newChapterOverview.trim(),
           }),
         }
       );
@@ -1071,10 +1071,12 @@ export function BooksAndStructuresPanel({
     setBusyAction(actionKey);
     setNotice(null);
     try {
-      const upload = await uploadAudioFileForContentNode(file, {
+      const upload = await uploadAudioFileForContentNode({
+        file,
         entityType,
         entityId,
         blockRole,
+        uploadedByUid: actor.uid,
       });
 
       const contentRole = mapOttBlockRoleToContentRole(blockRole);
@@ -1097,6 +1099,7 @@ export function BooksAndStructuresPanel({
             contentNodeType: nodeType,
             bookId: editionTree.edition.id,
             bookTitle: editionTree.edition.title,
+            editionId: editionTree.edition.id,
             chapterId: meta?.chapterId ?? activeChapter?.id ?? editionTree.edition.id,
             chapterTitle: meta?.chapterTitle ?? activeChapter?.title ?? editionTree.edition.title,
             contentNodeId: entityId,
@@ -1111,6 +1114,8 @@ export function BooksAndStructuresPanel({
             durationSec: upload.durationSec,
             durationLabel: upload.durationLabel,
             audioUrl: upload.audioUrl,
+            assetId: upload.assetId,
+            sha256Checksum: upload.sha256Checksum,
             status: 'published',
             uploadedByEmail: actor.email,
             uploadedByUid: actor.uid,
@@ -1118,7 +1123,7 @@ export function BooksAndStructuresPanel({
           actor
         );
         firestoreNote = result.firestoreSynced
-          ? ' · Metadata synced to Firestore'
+          ? ' · Uploaded to Supabase S3 & synced to Supabase DB'
           : ' · Metadata saved locally';
       }
 
@@ -1251,10 +1256,10 @@ export function BooksAndStructuresPanel({
           <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-3">
             <div>
               <p className="font-mono text-xs font-bold text-blue-400">
-                database/schema.sql — Unified Books &amp; Structures Relational Schema
+                database/schema.sql — Unified 3-Table Books &amp; Structures Schema (master_books · book_editions · content_nodes)
               </p>
               <p className="text-[11px] text-slate-400">
-                Supports constitutional, general_law, and biography book types with version_number, updated_at, soft-delete tombstones, and 1-to-1 manual audio assets.
+                Single unified content_nodes table for chapters, articles, sections, and biography topics with inline version_number, updated_at, soft-delete flags, 1-to-1 audio_assets, and zero legacy synchronization tables.
               </p>
             </div>
             <button
@@ -1821,7 +1826,7 @@ export function BooksAndStructuresPanel({
                         {copy.bookTypeShort}
                       </span>
                       <span className="font-mono text-[10px] font-semibold text-slate-500">
-                        v{book.versionNumber} · {book.year}
+                        v{book.versionNumber} · {book.enactmentYear}
                       </span>
                     </div>
                     <h3 className="mt-2 font-display text-sm font-bold text-slate-950">
@@ -1834,7 +1839,7 @@ export function BooksAndStructuresPanel({
                           key={ed.id}
                           className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700"
                         >
-                          {ed.languageNativeName}
+                          {ed.nativeLanguageName}
                         </span>
                       ))}
                     </div>
@@ -1917,7 +1922,7 @@ export function BooksAndStructuresPanel({
                             : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300'
                         }`}
                       >
-                        <span>{ed.languageNativeName}</span>
+                        <span>{ed.nativeLanguageName}</span>
                         <span className={`font-mono text-[10px] ${active ? 'text-blue-100' : 'text-slate-400'}`}>
                           v{ed.versionNumber}
                         </span>
@@ -2016,12 +2021,12 @@ export function BooksAndStructuresPanel({
                     <ManualAudioUploadSlot
                       label={`Book Overview Audio (${editionTree.edition.languageName} · ${editionTree.edition.title})`}
                       currentUrl={editionTree.edition.descriptionAudioUrl}
-                      firestoreRecord={findAudioMetadataForNode(
-                        contentAudioMetadata,
-                        editionTree.edition.id,
-                        'full',
-                        currentLangCode
-                      )}
+                      firestoreRecord={
+                        findAudioMetadataForNode(contentAudioMetadata, editionTree.edition.id, {
+                          blockRole: 'full',
+                          language: currentLangCode,
+                        })[0]
+                      }
                       isFirebaseSignedIn={isFirebaseSignedIn}
                       disabled={!canEdit}
                       uploading={
@@ -2171,9 +2176,9 @@ export function BooksAndStructuresPanel({
                           />
                           <textarea
                             rows={2}
-                            value={editChapter.overview}
+                            value={editChapter.overviewDefinition}
                             onChange={(e) =>
-                              setEditChapter((p) => ({ ...p, overview: e.target.value }))
+                              setEditChapter((p) => ({ ...p, overviewDefinition: e.target.value }))
                             }
                             disabled={!canEdit}
                             className="w-full rounded-md border border-slate-300 p-2 text-xs text-slate-900"
@@ -2193,12 +2198,12 @@ export function BooksAndStructuresPanel({
                         <ManualAudioUploadSlot
                           label={`Chapter Overview Audio (${activeChapter.chapterNumber})`}
                           currentUrl={activeChapter.overviewAudioUrl}
-                          firestoreRecord={findAudioMetadataForNode(
-                            contentAudioMetadata,
-                            activeChapter.id,
-                            'full',
-                            currentLangCode
-                          )}
+                          firestoreRecord={
+                            findAudioMetadataForNode(contentAudioMetadata, activeChapter.id, {
+                              blockRole: 'full',
+                              language: currentLangCode,
+                            })[0]
+                          }
                           isFirebaseSignedIn={isFirebaseSignedIn}
                           disabled={!canEdit}
                           uploading={
@@ -2320,7 +2325,7 @@ export function BooksAndStructuresPanel({
                         {activeChapter.units.map((u) => {
                           const selected = u.id === activeUnit?.id;
                           const hasAnyAudio = Boolean(
-                            u.fullAudioUrl ||
+                            u.fullUnitAudioUrl ||
                               u.definitionAudioUrl ||
                               u.purposeAudioUrl ||
                               u.explanationAudioUrl ||
@@ -2487,7 +2492,7 @@ export function BooksAndStructuresPanel({
                               {
                                 blockRole: 'unit_full' as const,
                                 label: activeCopy.audioLabels.full,
-                                url: activeUnit.fullAudioUrl,
+                                url: activeUnit.fullUnitAudioUrl,
                               },
                               {
                                 blockRole: 'unit_definition' as const,
@@ -2515,19 +2520,19 @@ export function BooksAndStructuresPanel({
                               key={slot.blockRole}
                               label={`${activeUnit.unitNumber} · ${slot.label}`}
                               currentUrl={slot.url}
-                              firestoreRecord={findAudioMetadataForNode(
-                                contentAudioMetadata,
-                                activeUnit.id,
-                                mapOttBlockRoleToContentRole(slot.blockRole),
-                                currentLangCode
-                              )}
+                              firestoreRecord={
+                                findAudioMetadataForNode(contentAudioMetadata, activeUnit.id, {
+                                  blockRole: mapOttBlockRoleToContentRole(slot.blockRole),
+                                  language: currentLangCode,
+                                })[0]
+                              }
                               isFirebaseSignedIn={isFirebaseSignedIn}
                               disabled={!canEdit}
                               uploading={
-                                busyAction === `upload-unit-${activeUnit.id}-${slot.blockRole}`
+                                busyAction === `upload-legal_unit-${activeUnit.id}-${slot.blockRole}`
                               }
                               onUpload={(file) =>
-                                handleUploadAudio('unit', activeUnit.id, slot.blockRole, file, {
+                                handleUploadAudio('legal_unit', activeUnit.id, slot.blockRole, file, {
                                   nodeNumber: activeUnit.unitNumber,
                                   nodeTitle: activeUnit.title,
                                   chapterId: activeChapter.id,

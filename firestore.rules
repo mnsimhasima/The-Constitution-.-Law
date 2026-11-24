@@ -543,6 +543,111 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidMasterBook(data, masterBookId) {
+      return data.keys().hasAll([
+          'id', 'slug', 'bookType', 'canonicalTitle', 'jurisdiction', 'enactmentYear',
+          'coverImageUrl', 'coverTone', 'versionNumber', 'isDeleted',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'slug', 'bookType', 'canonicalTitle', 'jurisdiction', 'enactmentYear',
+          'coverImageUrl', 'coverTone', 'versionNumber', 'isDeleted',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == masterBookId && isValidId(data.id)
+        && data.slug is string && data.slug.size() >= 1 && data.slug.size() <= 140
+        && data.bookType in ['constitutional', 'general_law', 'biography']
+        && data.canonicalTitle is string && data.canonicalTitle.size() >= 2 && data.canonicalTitle.size() <= 240
+        && data.jurisdiction is string && data.jurisdiction.size() >= 1 && data.jurisdiction.size() <= 140
+        && data.enactmentYear is string && data.enactmentYear.size() <= 32
+        && data.coverImageUrl is string && data.coverImageUrl.size() <= 500
+        && data.coverTone in ['cobalt', 'sapphire', 'slate', 'emerald', 'amber', 'obsidian']
+        && data.versionNumber is number && data.versionNumber >= 1 && data.versionNumber <= 1000000
+        && data.isDeleted is bool
+        && data.createdByUid is string && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBookEdition(data, editionId) {
+      return data.keys().hasAll([
+          'id', 'masterBookId', 'languageCode', 'languageName', 'nativeLanguageName',
+          'title', 'subtitle', 'description', 'descriptionAudioUrl', 'coverImageUrl',
+          'narratorName', 'status', 'versionNumber', 'isDeleted',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'masterBookId', 'languageCode', 'languageName', 'nativeLanguageName',
+          'title', 'subtitle', 'description', 'descriptionAudioUrl', 'coverImageUrl',
+          'narratorName', 'status', 'versionNumber', 'isDeleted',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == editionId && isValidId(data.id)
+        && data.masterBookId is string && isValidId(data.masterBookId)
+        && data.languageCode in ['en', 'te', 'kn', 'ta', 'ml', 'hi', 'es', 'fr', 'ar']
+        && data.languageName is string && data.languageName.size() >= 1 && data.languageName.size() <= 64
+        && data.nativeLanguageName is string && data.nativeLanguageName.size() >= 1 && data.nativeLanguageName.size() <= 80
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 260
+        && data.subtitle is string && data.subtitle.size() <= 400
+        && data.description is string && data.description.size() <= 4000
+        && data.descriptionAudioUrl is string && data.descriptionAudioUrl.size() <= 500
+        && data.coverImageUrl is string && data.coverImageUrl.size() <= 500
+        && data.narratorName is string && data.narratorName.size() <= 140
+        && data.status in ['draft', 'in_review', 'published', 'archived']
+        && data.versionNumber is number && data.versionNumber >= 1 && data.versionNumber <= 1000000
+        && data.isDeleted is bool
+        && data.createdByUid is string && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidContentNode(data, nodeId) {
+      return data.keys().hasAll([
+          'id', 'editionId', 'parentNodeId', 'nodeType', 'nodeOrder', 'nodeNumber',
+          'title', 'definition', 'purposeBackground', 'deepExplanation',
+          'practicalExamples', 'estimatedMinutes', 'overviewAudioUrl',
+          'definitionAudioUrl', 'purposeAudioUrl', 'explanationAudioUrl',
+          'examplesAudioUrl', 'fullAudioUrl', 'audioDurationSec',
+          'versionNumber', 'isDeleted', 'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'editionId', 'parentNodeId', 'nodeType', 'nodeOrder', 'nodeNumber',
+          'title', 'definition', 'purposeBackground', 'deepExplanation',
+          'practicalExamples', 'estimatedMinutes', 'overviewAudioUrl',
+          'definitionAudioUrl', 'purposeAudioUrl', 'explanationAudioUrl',
+          'examplesAudioUrl', 'fullAudioUrl', 'audioDurationSec',
+          'versionNumber', 'isDeleted', 'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == nodeId && isValidId(data.id)
+        && data.editionId is string && isValidId(data.editionId)
+        && data.parentNodeId is string && data.parentNodeId.size() <= 128
+        && data.nodeType in ['chapter', 'article', 'section', 'topic']
+        && (
+          (data.nodeType == 'chapter' && data.parentNodeId == '')
+          || (data.nodeType in ['article', 'section', 'topic'] && isValidId(data.parentNodeId))
+        )
+        && data.nodeOrder is number && data.nodeOrder >= 0 && data.nodeOrder <= 100000
+        && data.nodeNumber is string && data.nodeNumber.size() >= 1 && data.nodeNumber.size() <= 80
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 260
+        && data.definition is string && data.definition.size() <= 8000
+        && data.purposeBackground is string && data.purposeBackground.size() <= 8000
+        && data.deepExplanation is string && data.deepExplanation.size() <= 8000
+        && data.practicalExamples is string && data.practicalExamples.size() <= 8000
+        && data.estimatedMinutes is number && data.estimatedMinutes >= 0 && data.estimatedMinutes <= 1440
+        && data.overviewAudioUrl is string && data.overviewAudioUrl.size() <= 500
+        && data.definitionAudioUrl is string && data.definitionAudioUrl.size() <= 500
+        && data.purposeAudioUrl is string && data.purposeAudioUrl.size() <= 500
+        && data.explanationAudioUrl is string && data.explanationAudioUrl.size() <= 500
+        && data.examplesAudioUrl is string && data.examplesAudioUrl.size() <= 500
+        && data.fullAudioUrl is string && data.fullAudioUrl.size() <= 500
+        && data.audioDurationSec is number && data.audioDurationSec >= 0 && data.audioDurationSec <= 86400
+        && data.versionNumber is number && data.versionNumber >= 1 && data.versionNumber <= 1000000
+        && data.isDeleted is bool
+        && data.createdByUid is string && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // =========================================================================
     // 1. Users Collection (Strict PII Isolation)
     // =========================================================================
@@ -969,6 +1074,146 @@ service cloud.firestore {
         ])
         && isAdmin();
       allow delete: if false;
+    }
+
+    // =========================================================================
+    // 11. Unified Master Books (Books & Structures — Parent Groupings)
+    // =========================================================================
+    match /masterBooks/{masterBookId} {
+      allow get: if isValidId(masterBookId) && (resource.data.isDeleted == false || isStaff());
+      allow list: if resource.data.isDeleted == false
+        || (isVerifiedUser() && resource.data.createdByUid == request.auth.uid)
+        || isBootstrappedAdmin();
+      allow create: if isValidId(masterBookId)
+        && isValidMasterBook(incoming(), masterBookId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().versionNumber == 1
+        && incoming().isDeleted == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (isAdmin() || isEditor());
+      allow update: if isValidId(masterBookId)
+        && isValidMasterBook(incoming(), masterBookId)
+        && incoming().id == existing().id
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().versionNumber == existing().versionNumber + 1
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'slug', 'bookType', 'canonicalTitle', 'jurisdiction', 'enactmentYear',
+            'coverImageUrl', 'coverTone', 'versionNumber', 'isDeleted', 'updatedAt'
+          ]))
+          ||
+          (isEditor() && incoming().isDeleted == existing().isDeleted
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'slug', 'bookType', 'canonicalTitle', 'jurisdiction', 'enactmentYear',
+              'coverImageUrl', 'coverTone', 'versionNumber', 'updatedAt'
+            ]))
+        );
+      allow delete: if isValidId(masterBookId) && isAdmin();
+    }
+
+    // =========================================================================
+    // 12. Unified Book Editions (Language Variants — No Auto-Translation)
+    // =========================================================================
+    match /bookEditions/{editionId} {
+      allow get: if isValidId(editionId)
+        && ((resource.data.status == 'published' && resource.data.isDeleted == false) || isStaff());
+      allow list: if (resource.data.status == 'published' && resource.data.isDeleted == false)
+        || (isVerifiedUser() && resource.data.createdByUid == request.auth.uid)
+        || isBootstrappedAdmin();
+      allow create: if isValidId(editionId)
+        && isValidBookEdition(incoming(), editionId)
+        && exists(/databases/$(database)/documents/masterBooks/$(incoming().masterBookId))
+        && incoming().createdByUid == request.auth.uid
+        && incoming().versionNumber == 1
+        && incoming().isDeleted == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (isEditor() && incoming().status in ['draft', 'in_review'])
+        );
+      allow update: if isValidId(editionId)
+        && isValidBookEdition(incoming(), editionId)
+        && incoming().id == existing().id
+        && incoming().masterBookId == existing().masterBookId
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().versionNumber == existing().versionNumber + 1
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'languageCode', 'languageName', 'nativeLanguageName', 'title', 'subtitle',
+            'description', 'descriptionAudioUrl', 'coverImageUrl', 'narratorName',
+            'status', 'versionNumber', 'isDeleted', 'updatedAt'
+          ]))
+          ||
+          (isEditor()
+            && incoming().isDeleted == existing().isDeleted
+            && incoming().status in ['draft', 'in_review']
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'languageCode', 'languageName', 'nativeLanguageName', 'title', 'subtitle',
+              'description', 'descriptionAudioUrl', 'coverImageUrl', 'narratorName',
+              'status', 'versionNumber', 'updatedAt'
+            ]))
+          ||
+          (isReviewer()
+            && incoming().isDeleted == existing().isDeleted
+            && incoming().status in ['published', 'draft', 'archived']
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'versionNumber', 'updatedAt'
+            ]))
+        );
+      allow delete: if isValidId(editionId) && isAdmin();
+    }
+
+    // =========================================================================
+    // 13. Unified Content Nodes (Chapters, Articles, Sections, Topics)
+    // =========================================================================
+    match /contentNodes/{nodeId} {
+      allow get: if isValidId(nodeId) && (resource.data.isDeleted == false || isStaff());
+      allow list: if resource.data.isDeleted == false
+        || (isVerifiedUser() && resource.data.createdByUid == request.auth.uid)
+        || isBootstrappedAdmin();
+      allow create: if isValidId(nodeId)
+        && isValidContentNode(incoming(), nodeId)
+        && exists(/databases/$(database)/documents/bookEditions/$(incoming().editionId))
+        && incoming().createdByUid == request.auth.uid
+        && incoming().versionNumber == 1
+        && incoming().isDeleted == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (isAdmin() || isEditor());
+      allow update: if isValidId(nodeId)
+        && isValidContentNode(incoming(), nodeId)
+        && incoming().id == existing().id
+        && incoming().editionId == existing().editionId
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().versionNumber == existing().versionNumber + 1
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'parentNodeId', 'nodeType', 'nodeOrder', 'nodeNumber', 'title',
+            'definition', 'purposeBackground', 'deepExplanation', 'practicalExamples',
+            'estimatedMinutes', 'overviewAudioUrl', 'definitionAudioUrl',
+            'purposeAudioUrl', 'explanationAudioUrl', 'examplesAudioUrl',
+            'fullAudioUrl', 'audioDurationSec', 'versionNumber', 'isDeleted', 'updatedAt'
+          ]))
+          ||
+          (isEditor()
+            && incoming().isDeleted == existing().isDeleted
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'parentNodeId', 'nodeType', 'nodeOrder', 'nodeNumber', 'title',
+              'definition', 'purposeBackground', 'deepExplanation', 'practicalExamples',
+              'estimatedMinutes', 'overviewAudioUrl', 'definitionAudioUrl',
+              'purposeAudioUrl', 'explanationAudioUrl', 'examplesAudioUrl',
+              'fullAudioUrl', 'audioDurationSec', 'versionNumber', 'updatedAt'
+            ]))
+        );
+      allow delete: if isValidId(nodeId) && isAdmin();
     }
   }
 }

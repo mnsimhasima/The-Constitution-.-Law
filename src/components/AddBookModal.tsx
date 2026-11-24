@@ -77,7 +77,7 @@ export function AddBookModal({ isOpen, isSignedIn, onClose, onAddBook }: AddBook
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {isSignedIn
-                  ? 'Saved privately to your Firestore cloud vault with instant audio narration.'
+                  ? 'Saved privately to your Supabase PostgreSQL cloud vault with instant audio narration.'
                   : 'Saved to your device library with instant English & Telugu audio narration.'}
               </p>
             </div>

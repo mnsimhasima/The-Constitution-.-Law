@@ -1,21 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-  type Timestamp,
-} from 'firebase/firestore';
 import { COMMUNITY_SCHOLARS, INITIAL_LAW_BOOKS, INITIAL_NOTIFICATIONS } from '../data/booksData';
-import { db, handleFirestoreError, OperationType } from '../firebase';
 import type {
   ActivityItem,
   AudioMode,
@@ -37,8 +22,8 @@ import type {
 } from '../types/library';
 import {
   clearMemoryAudioClipUrls,
-  fetchTtsAudioBlobFromServer,
-} from '../utils/audioTtsClient';
+  fetchManualAudioBlobFromServer,
+} from '../utils/manualAudioClient';
 import { estimateSpeechSeconds, getClauseKey, sanitizeDocId, toggleHighlightInMap } from '../utils/libraryLogic';
 import {
   buildChapterCacheKey,
@@ -49,11 +34,8 @@ import {
   putCachedAudioBlobInDb,
 } from '../utils/offlineAudioCache';
 import {
-  buildCoverFallbackMap,
   createLibraryBackgroundSyncService,
   loadCachedBookIndexFromStorage,
-  mapCmsBookRecordToLawBook,
-  mergeBookIndex,
   saveCachedBookIndexToStorage,
   type BookIndexSyncStatus,
   type BookIndexSyncSummary,
@@ -236,10 +218,7 @@ function loadInitialState(): PersistedLibraryState {
 }
 
 function timestampToIso(value: unknown): string {
-  if (value && typeof value === 'object' && 'toDate' in value && typeof (value as Timestamp).toDate === 'function') {
-    return (value as Timestamp).toDate().toISOString();
-  }
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string' && value.trim()) return value;
   return new Date().toISOString();
 }
 
@@ -339,7 +318,9 @@ export function useLibraryStorage(user: User | null) {
   const bookIndexSyncServiceRef = useRef<LibraryBackgroundSyncService | null>(null);
   const cacheAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const cacheManagerRef = useRef(
-    createChapterCacheManager(getOfflineAudioStore(), fetchTtsAudioBlobFromServer)
+    createChapterCacheManager(getOfflineAudioStore(), (sourceUrl, _lang, _voice, signal) =>
+      fetchManualAudioBlobFromServer(sourceUrl, signal)
+    )
   );
 
   const isCloudVerifiedUser = Boolean(user && user.emailVerified);
@@ -363,8 +344,6 @@ export function useLibraryStorage(user: User | null) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const fallbackCovers = buildCoverFallbackMap(INITIAL_LAW_BOOKS);
-
     const fetchRemoteBookIndex = async ({
       etag,
       signal,
@@ -372,114 +351,39 @@ export function useLibraryStorage(user: User | null) {
       etag: string | null;
       signal?: AbortSignal;
     }): Promise<RemoteBookIndexPayload> => {
-      let apiBooks: LawBook[] = [];
-      let apiVersion: string | undefined;
-      let apiEtag: string | null = etag;
-      let apiNotModified = false;
-      let apiSucceeded = false;
-      let apiError: unknown = null;
-
-      try {
-        const headers: Record<string, string> = { Accept: 'application/json' };
-        if (etag) {
-          headers['If-None-Match'] = etag;
-        }
-        const response = await fetch('/api/library/book-index', {
-          method: 'GET',
-          headers,
-          cache: 'no-store',
-          signal,
-        });
-        if (response.status === 304) {
-          apiNotModified = true;
-          apiSucceeded = true;
-          apiEtag = response.headers.get('etag') ?? etag;
-        } else if (response.ok) {
-          const data = (await response.json()) as {
-            version?: string;
-            books?: LawBook[];
-          };
-          apiBooks = Array.isArray(data.books) ? data.books : [];
-          apiVersion = typeof data.version === 'string' ? data.version : undefined;
-          apiEtag = response.headers.get('etag') ?? null;
-          apiSucceeded = true;
-        } else {
-          apiError = new Error(`Book index API responded with HTTP ${response.status}`);
-        }
-      } catch (err) {
-        apiError = err;
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (etag) {
+        headers['If-None-Match'] = etag;
       }
+      const response = await fetch('/api/books-structures/mobile-library', {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+        signal,
+      });
 
-      if (signal?.aborted) {
-        throw new DOMException('Background book index sync aborted', 'AbortError');
-      }
-
-      let firestoreBooks: LawBook[] = [];
-      let firestoreSucceeded = false;
-      let firestoreError: unknown = null;
-
-      try {
-        const cmsSnapshot = await getDocs(
-          query(collection(db, 'cmsBooks'), where('status', '==', 'published'))
-        );
-        firestoreBooks = cmsSnapshot.docs
-          .map((docSnap) =>
-            mapCmsBookRecordToLawBook(
-              docSnap.id,
-              docSnap.data() as Record<string, unknown>,
-              fallbackCovers
-            )
-          )
-          .filter((b): b is LawBook => b !== null);
-        firestoreSucceeded = true;
-      } catch (err) {
-        firestoreError = err;
-      }
-
-      if (!apiSucceeded && !firestoreSucceeded) {
-        throw apiError ?? firestoreError ?? new Error('Unable to reach backend book catalog.');
-      }
-
-      if (apiNotModified && firestoreBooks.length === 0) {
+      if (response.status === 304) {
         return {
           books: [],
-          etag: apiEtag,
+          etag: response.headers.get('etag') ?? etag,
           notModified: true,
           source: 'backend',
         };
       }
 
-      if (apiNotModified && firestoreBooks.length > 0) {
-        return {
-          books: firestoreBooks,
-          etag: apiEtag,
-          notModified: false,
-          source: 'firestore',
-        };
+      if (!response.ok) {
+        throw new Error(`Book index API responded with HTTP ${response.status}`);
       }
 
-      if (apiBooks.length > 0 && firestoreBooks.length > 0) {
-        const combined = mergeBookIndex(apiBooks, firestoreBooks, fallbackCovers);
-        return {
-          books: combined.books,
-          etag: apiEtag,
-          source: 'merged',
-        };
-      }
-
-      if (apiSucceeded) {
-        return {
-          books: apiBooks,
-          version: apiVersion,
-          etag: apiEtag,
-          source: 'backend',
-        };
-      }
-
+      const data = (await response.json()) as {
+        version?: string;
+        books?: LawBook[];
+      };
       return {
-        books: firestoreBooks,
-        etag: apiEtag,
-        source: 'firestore',
+        books: Array.isArray(data.books) ? data.books : [],
+        version: typeof data.version === 'string' ? data.version : undefined,
+        etag: response.headers.get('etag') ?? null,
+        source: 'backend',
       };
     };
 
@@ -580,7 +484,7 @@ export function useLibraryStorage(user: User | null) {
     }
   }, [state.preferences.appDarkMode]);
 
-  // Real-time Firestore Cloud Sync when authenticated
+  // Supabase PostgreSQL Cloud Sync when authenticated
   useEffect(() => {
     if (!isCloudVerifiedUser || !user) {
       userDocReadyRef.current = false;
@@ -589,186 +493,120 @@ export function useLibraryStorage(user: User | null) {
     }
 
     let cancelled = false;
-    const unsubscribers: Array<() => void> = [];
     const uid = user.uid;
     const userDisplayName = (user.displayName ?? 'Legal Scholar').slice(0, 120);
     const userEmail = (user.email ?? '').slice(0, 180);
     const userPhotoURL = (user.photoURL ?? '').slice(0, 500);
-    const userDocRef = doc(db, 'users', uid);
 
-    async function bootstrapCloudSync() {
+    async function bootstrapSupabaseCloudSync() {
       setCloudSyncState('syncing');
       try {
-        const snapshot = await getDoc(userDocRef);
+        const response = await fetch(`/api/supabase/user/${encodeURIComponent(uid)}/state`, {
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const remote = (await response.json()) as {
+          profile?: {
+            preferredLanguage?: LanguageCode;
+            streakDays?: number;
+            audioMinutes?: number;
+            startedPlanIds?: string[];
+            completedPlanDayIds?: string[];
+            readChapterIds?: string[];
+          } | null;
+          notes?: ClauseNote[];
+          highlights?: Record<string, ClauseHighlight>;
+          bookmarks?: Record<string, ClauseBookmark>;
+          customBooks?: Array<Record<string, unknown> & { id: string }>;
+        };
         if (cancelled) return;
 
-        if (!snapshot.exists()) {
+        if (!remote.profile) {
           const current = stateRef.current;
-          await setDoc(userDocRef, {
-            uid,
-            displayName: userDisplayName,
-            email: userEmail,
-            photoURL: userPhotoURL,
-            preferredLanguage: current.preferences.language,
-            streakDays: Math.min(10000, Math.max(0, current.streakDays)),
-            audioMinutes: Math.min(1000000, Math.max(0, current.audioMinutes)),
-            startedPlanIds: current.startedPlanIds.slice(0, 30),
-            completedPlanDayIds: current.completedPlanDayIds.slice(0, 100),
-            readChapterIds: current.readChapterIds.slice(0, 100),
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
+          await fetch(`/api/supabase/user/${encodeURIComponent(uid)}/profile`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              displayName: userDisplayName,
+              email: userEmail,
+              photoURL: userPhotoURL,
+              preferredLanguage: current.preferences.language,
+              streakDays: Math.min(10000, Math.max(0, current.streakDays)),
+              audioMinutes: Math.min(1000000, Math.max(0, current.audioMinutes)),
+              startedPlanIds: current.startedPlanIds.slice(0, 30),
+              completedPlanDayIds: current.completedPlanDayIds.slice(0, 100),
+              readChapterIds: current.readChapterIds.slice(0, 100),
+            }),
           });
+        } else {
+          const p = remote.profile;
+          const lang = p.preferredLanguage;
+          const hydratedBooks: LawBook[] = Array.isArray(remote.customBooks)
+            ? remote.customBooks.map((row) => hydrateCustomBookFromDoc(row.id, row))
+            : [];
+          const cloudNotes: ClauseNote[] = Array.isArray(remote.notes)
+            ? remote.notes.map((n) => ({ ...n, updatedAt: timestampToIso(n.updatedAt) }))
+            : [];
+
+          setState((prev) => ({
+            ...prev,
+            streakDays: typeof p.streakDays === 'number' ? p.streakDays : prev.streakDays,
+            audioMinutes: typeof p.audioMinutes === 'number' ? p.audioMinutes : prev.audioMinutes,
+            startedPlanIds: Array.isArray(p.startedPlanIds) ? p.startedPlanIds : prev.startedPlanIds,
+            completedPlanDayIds: Array.isArray(p.completedPlanDayIds)
+              ? p.completedPlanDayIds
+              : prev.completedPlanDayIds,
+            readChapterIds: Array.isArray(p.readChapterIds) ? p.readChapterIds : prev.readChapterIds,
+            notes: cloudNotes.length > 0 ? cloudNotes : prev.notes,
+            highlights:
+              remote.highlights && Object.keys(remote.highlights).length > 0
+                ? remote.highlights
+                : prev.highlights,
+            bookmarks:
+              remote.bookmarks && Object.keys(remote.bookmarks).length > 0
+                ? remote.bookmarks
+                : prev.bookmarks,
+            customBooks: hydratedBooks.length > 0 ? hydratedBooks : prev.customBooks,
+            preferences: {
+              ...prev.preferences,
+              language:
+                lang && ['en', 'te', 'hi', 'es', 'fr', 'ar'].includes(lang)
+                  ? lang
+                  : prev.preferences.language,
+            },
+          }));
         }
 
-        if (cancelled) return;
-        userDocReadyRef.current = true;
-
-        // 1. Profile listener
-        const unsubProfile = onSnapshot(
-          userDocRef,
-          (docSnap) => {
-            if (!docSnap.exists()) return;
-            const d = docSnap.data();
-            const lang = d.preferredLanguage as LanguageCode | undefined;
-            setState((prev) => ({
-              ...prev,
-              streakDays: typeof d.streakDays === 'number' ? d.streakDays : prev.streakDays,
-              audioMinutes: typeof d.audioMinutes === 'number' ? d.audioMinutes : prev.audioMinutes,
-              startedPlanIds: Array.isArray(d.startedPlanIds) ? (d.startedPlanIds as string[]) : prev.startedPlanIds,
-              completedPlanDayIds: Array.isArray(d.completedPlanDayIds)
-                ? (d.completedPlanDayIds as string[])
-                : prev.completedPlanDayIds,
-              readChapterIds: Array.isArray(d.readChapterIds) ? (d.readChapterIds as string[]) : prev.readChapterIds,
-              preferences: {
-                ...prev.preferences,
-                language: lang && ['en', 'te', 'hi', 'es', 'fr', 'ar'].includes(lang) ? lang : prev.preferences.language,
-              },
-            }));
-            setCloudSyncState('synced');
-          },
-          (err) => {
-            setCloudSyncState('error');
-            handleFirestoreError(err, OperationType.GET, `users/${uid}`);
-          }
-        );
-        unsubscribers.push(unsubProfile);
-
-        // 2. Notes listener (scoped with where('ownerId', '==', uid) to satisfy list rule)
-        const notesQuery = query(collection(db, 'users', uid, 'notes'), where('ownerId', '==', uid));
-        const unsubNotes = onSnapshot(
-          notesQuery,
-          (snap) => {
-            const cloudNotes: ClauseNote[] = snap.docs
-              .map((docItem) => {
-                const d = docItem.data();
-                return {
-                  id: docItem.id,
-                  clauseKey: String(d.clauseKey ?? ''),
-                  bookId: String(d.bookId ?? ''),
-                  chapterId: String(d.chapterId ?? ''),
-                  clauseId: String(d.clauseId ?? ''),
-                  content: String(d.content ?? ''),
-                  updatedAt: timestampToIso(d.updatedAt),
-                };
-              })
-              .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-            setState((prev) => ({ ...prev, notes: cloudNotes }));
-          },
-          (err) => {
-            setCloudSyncState('error');
-            handleFirestoreError(err, OperationType.LIST, `users/${uid}/notes`);
-          }
-        );
-        unsubscribers.push(unsubNotes);
-
-        // 3. Annotations (highlights + bookmarks) listener
-        const annQuery = query(collection(db, 'users', uid, 'annotations'), where('ownerId', '==', uid));
-        const unsubAnnotations = onSnapshot(
-          annQuery,
-          (snap) => {
-            const nextHighlights: Record<string, ClauseHighlight> = {};
-            const nextBookmarks: Record<string, ClauseBookmark> = {};
-            for (const docItem of snap.docs) {
-              const d = docItem.data();
-              const clauseKey = String(d.clauseKey ?? '');
-              if (!clauseKey) continue;
-              if (d.kind === 'highlight' && d.color && d.color !== 'none') {
-                nextHighlights[clauseKey] = {
-                  clauseKey,
-                  bookId: String(d.bookId ?? ''),
-                  chapterId: String(d.chapterId ?? ''),
-                  clauseId: String(d.clauseId ?? ''),
-                  color: d.color as HighlightColor,
-                  updatedAt: timestampToIso(d.updatedAt),
-                };
-              } else if (d.kind === 'bookmark') {
-                nextBookmarks[clauseKey] = {
-                  clauseKey,
-                  bookId: String(d.bookId ?? ''),
-                  chapterId: String(d.chapterId ?? ''),
-                  clauseId: String(d.clauseId ?? ''),
-                  createdAt: timestampToIso(d.createdAt),
-                };
-              }
-            }
-            setState((prev) => ({
-              ...prev,
-              highlights: nextHighlights,
-              bookmarks: nextBookmarks,
-            }));
-          },
-          (err) => {
-            setCloudSyncState('error');
-            handleFirestoreError(err, OperationType.LIST, `users/${uid}/annotations`);
-          }
-        );
-        unsubscribers.push(unsubAnnotations);
-
-        // 4. Custom books listener
-        const booksQuery = query(collection(db, 'users', uid, 'customBooks'), where('ownerId', '==', uid));
-        const unsubBooks = onSnapshot(
-          booksQuery,
-          (snap) => {
-            const hydrated: LawBook[] = snap.docs.map((docItem) =>
-              hydrateCustomBookFromDoc(docItem.id, docItem.data() as Record<string, unknown>)
-            );
-            setState((prev) => ({ ...prev, customBooks: hydrated }));
-          },
-          (err) => {
-            setCloudSyncState('error');
-            handleFirestoreError(err, OperationType.LIST, `users/${uid}/customBooks`);
-          }
-        );
-        unsubscribers.push(unsubBooks);
-      } catch (err) {
+        if (!cancelled) {
+          userDocReadyRef.current = true;
+          setCloudSyncState('synced');
+        }
+      } catch {
         if (!cancelled) {
           setCloudSyncState('error');
-          handleFirestoreError(err, OperationType.WRITE, `users/${uid}`);
         }
       }
     }
 
-    void bootstrapCloudSync();
+    void bootstrapSupabaseCloudSync();
 
     return () => {
       cancelled = true;
       userDocReadyRef.current = false;
-      for (const unsub of unsubscribers) {
-        unsub();
-      }
     };
   }, [isCloudVerifiedUser, user]);
 
   const syncUserProfilePatch = useCallback(
     (patch: Record<string, unknown>) => {
       if (!isCloudVerifiedUser || !user || !userDocReadyRef.current) return;
-      const path = `users/${user.uid}`;
-      void updateDoc(doc(db, 'users', user.uid), {
-        ...patch,
-        updatedAt: serverTimestamp(),
-      }).catch((err) => {
+      void fetch(`/api/supabase/user/${encodeURIComponent(user.uid)}/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      }).catch(() => {
         setCloudSyncState('error');
-        handleFirestoreError(err, OperationType.UPDATE, path);
       });
     },
     [isCloudVerifiedUser, user]
@@ -844,28 +682,23 @@ export function useLibraryStorage(user: User | null) {
 
       if (!isCloudVerifiedUser || !user || !userDocReadyRef.current) return;
       const docId = sanitizeDocId(`hl_${clauseKey}`);
-      const docRef = doc(db, 'users', user.uid, 'annotations', docId);
-      const path = `users/${user.uid}/annotations/${docId}`;
+      const url = `/api/supabase/user/${encodeURIComponent(user.uid)}/annotations/${encodeURIComponent(docId)}`;
 
       if (color === null || existing?.color === color) {
-        void deleteDoc(docRef).catch((err) => handleFirestoreError(err, OperationType.DELETE, path));
-      } else if (existing) {
-        void updateDoc(docRef, {
-          color,
-          updatedAt: serverTimestamp(),
-        }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, path));
+        void fetch(url, { method: 'DELETE' }).catch(() => {});
       } else {
-        void setDoc(docRef, {
-          ownerId: user.uid,
-          clauseKey: clauseKey.slice(0, 160),
-          bookId: bookId.slice(0, 80),
-          chapterId: chapterId.slice(0, 80),
-          clauseId: clauseId.slice(0, 80),
-          kind: 'highlight',
-          color,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }).catch((err) => handleFirestoreError(err, OperationType.CREATE, path));
+        void fetch(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clauseKey: clauseKey.slice(0, 160),
+            bookId: bookId.slice(0, 80),
+            chapterId: chapterId.slice(0, 80),
+            clauseId: clauseId.slice(0, 80),
+            kind: 'highlight',
+            color,
+          }),
+        }).catch(() => {});
       }
     },
     [isCloudVerifiedUser, user]
@@ -894,23 +727,23 @@ export function useLibraryStorage(user: User | null) {
 
       if (!isCloudVerifiedUser || !user || !userDocReadyRef.current) return;
       const docId = sanitizeDocId(`bm_${clauseKey}`);
-      const docRef = doc(db, 'users', user.uid, 'annotations', docId);
-      const path = `users/${user.uid}/annotations/${docId}`;
+      const url = `/api/supabase/user/${encodeURIComponent(user.uid)}/annotations/${encodeURIComponent(docId)}`;
 
       if (hadBookmark) {
-        void deleteDoc(docRef).catch((err) => handleFirestoreError(err, OperationType.DELETE, path));
+        void fetch(url, { method: 'DELETE' }).catch(() => {});
       } else {
-        void setDoc(docRef, {
-          ownerId: user.uid,
-          clauseKey: clauseKey.slice(0, 160),
-          bookId: bookId.slice(0, 80),
-          chapterId: chapterId.slice(0, 80),
-          clauseId: clauseId.slice(0, 80),
-          kind: 'bookmark',
-          color: 'none',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }).catch((err) => handleFirestoreError(err, OperationType.CREATE, path));
+        void fetch(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clauseKey: clauseKey.slice(0, 160),
+            bookId: bookId.slice(0, 80),
+            chapterId: chapterId.slice(0, 80),
+            clauseId: clauseId.slice(0, 80),
+            kind: 'bookmark',
+            color: 'none',
+          }),
+        }).catch(() => {});
       }
     },
     [isCloudVerifiedUser, user]
@@ -947,26 +780,20 @@ export function useLibraryStorage(user: User | null) {
       });
 
       if (!isCloudVerifiedUser || !user || !userDocReadyRef.current) return;
-      const docRef = doc(db, 'users', user.uid, 'notes', noteId);
-      const path = `users/${user.uid}/notes/${noteId}`;
-
-      if (existingNoteId) {
-        void updateDoc(docRef, {
-          content: trimmed,
-          updatedAt: serverTimestamp(),
-        }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, path));
-      } else {
-        void setDoc(docRef, {
-          ownerId: user.uid,
-          clauseKey: clauseKey.slice(0, 160),
-          bookId: bookId.slice(0, 80),
-          chapterId: chapterId.slice(0, 80),
-          clauseId: clauseId.slice(0, 80),
-          content: trimmed,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }).catch((err) => handleFirestoreError(err, OperationType.CREATE, path));
-      }
+      void fetch(
+        `/api/supabase/user/${encodeURIComponent(user.uid)}/notes/${encodeURIComponent(noteId)}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clauseKey: clauseKey.slice(0, 160),
+            bookId: bookId.slice(0, 80),
+            chapterId: chapterId.slice(0, 80),
+            clauseId: clauseId.slice(0, 80),
+            content: trimmed,
+          }),
+        }
+      ).catch(() => {});
     },
     [isCloudVerifiedUser, user]
   );
@@ -980,10 +807,10 @@ export function useLibraryStorage(user: User | null) {
 
       if (!isCloudVerifiedUser || !user || !userDocReadyRef.current) return;
       const cleanId = sanitizeDocId(noteId);
-      const path = `users/${user.uid}/notes/${cleanId}`;
-      void deleteDoc(doc(db, 'users', user.uid, 'notes', cleanId)).catch((err) =>
-        handleFirestoreError(err, OperationType.DELETE, path)
-      );
+      void fetch(
+        `/api/supabase/user/${encodeURIComponent(user.uid)}/notes/${encodeURIComponent(cleanId)}`,
+        { method: 'DELETE' }
+      ).catch(() => {});
     },
     [isCloudVerifiedUser, user]
   );
@@ -997,28 +824,14 @@ export function useLibraryStorage(user: User | null) {
 
       if (!isCloudVerifiedUser || !user || !userDocReadyRef.current) return;
       const cleanBookId = sanitizeDocId(book.id);
-      const firstChapter = book.chapters[0];
-      const firstClause = firstChapter?.clauses[0];
-      if (!firstChapter || !firstClause) return;
-
-      const path = `users/${user.uid}/customBooks/${cleanBookId}`;
-      void setDoc(doc(db, 'users', user.uid, 'customBooks', cleanBookId), {
-        ownerId: user.uid,
-        shortTitle: book.shortTitle.slice(0, 80),
-        titleEn: book.title.en.slice(0, 160),
-        jurisdiction: book.jurisdiction.slice(0, 120),
-        year: book.year.slice(0, 32),
-        category: book.category,
-        chapterTitleEn: firstChapter.title.en.slice(0, 160),
-        clauseNumber: firstClause.number.slice(0, 60),
-        principleEn: firstClause.principle.en.slice(0, 120),
-        clauseTextEn: firstClause.text.en.slice(0, 4000),
-        explanationEn: firstClause.explanation.en.slice(0, 4000),
-        clauseTextTe: (firstClause.text.te ?? '').slice(0, 4000),
-        explanationTe: (firstClause.explanation.te ?? '').slice(0, 4000),
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      }).catch((err) => handleFirestoreError(err, OperationType.CREATE, path));
+      void fetch(
+        `/api/supabase/user/${encodeURIComponent(user.uid)}/custom-books/${encodeURIComponent(cleanBookId)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ book }),
+        }
+      ).catch(() => {});
     },
     [isCloudVerifiedUser, user]
   );
@@ -1266,7 +1079,7 @@ export function useLibraryStorage(user: User | null) {
       }
     ): Promise<CachedChapterSummary | null> => {
       const targetLang = options?.language ?? stateRef.current.preferences.language;
-      const targetVoice: AudioVoiceName = options?.voiceName ?? 'Kore';
+      const targetVoice: AudioVoiceName = options?.voiceName ?? 'manual';
       const targetMode = options?.mode ?? stateRef.current.preferences.audioMode;
       const chapterCacheKey = buildChapterCacheKey(
         book.id,
@@ -1395,7 +1208,7 @@ export function useLibraryStorage(user: User | null) {
   );
 
   const getCachedAudioBlob = useCallback(
-    (text: string, language: LanguageCode, voiceName: AudioVoiceName = 'Kore') =>
+    (text: string, language: LanguageCode, voiceName: AudioVoiceName = 'manual') =>
       getCachedAudioBlobFromDb(text, language, voiceName),
     []
   );

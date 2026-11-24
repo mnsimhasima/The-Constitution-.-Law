@@ -382,8 +382,8 @@ export function AdminContentPanel({
     const audioSummary =
       metadataInputs.length > 0
         ? syncedCount > 0
-          ? ` Linked ${metadataInputs.length} audio file(s) and stored metadata in Firestore.`
-          : ` Linked ${metadataInputs.length} audio file(s) to contentAudioMetadata (${clause.id}).`
+          ? ` Linked ${metadataInputs.length} audio file(s) and stored metadata in Supabase DB + S3.`
+          : ` Linked ${metadataInputs.length} audio file(s) to content_audio_metadata (${clause.id}).`
         : '';
 
     resetClauseForm();
@@ -1127,17 +1127,17 @@ export function AdminContentPanel({
         </form>
       )}
 
-      {/* Linked Per-Section & Per-Article Firestore Audio Metadata */}
+      {/* Linked Per-Section & Per-Article Supabase Audio Metadata */}
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-5 py-3">
           <div className="flex items-center gap-2">
             <Database className="h-4 w-4 text-blue-600" />
             <div>
               <h2 className="font-display text-sm font-bold text-slate-950">
-                Linked Section &amp; Article Audio Metadata (Firestore)
+                Linked Section &amp; Article Audio Metadata (Supabase DB + S3)
               </h2>
               <p className="text-[11px] text-slate-500">
-                Collection <span className="font-mono">contentAudioMetadata</span> — every uploaded file linked to its exact section or article node.
+                Table <span className="font-mono">content_audio_metadata</span> — every uploaded file stored in Supabase S3 and linked to its exact section or article node.
               </p>
             </div>
           </div>
@@ -1148,7 +1148,7 @@ export function AdminContentPanel({
 
         {contentAudioMetadata.length === 0 ? (
           <div className="p-6 text-center text-xs text-slate-500">
-            No per-section or per-article audio files uploaded yet. Open <strong>Verses &amp; Meaning</strong> or <strong>OTT Editions &amp; Sync</strong> to upload audio directly on any Article or Section.
+            No per-section or per-article audio files uploaded yet. Open <strong>Books &amp; Structures</strong> or <strong>Verses &amp; Meaning</strong> to upload audio directly to Supabase S3 on any Article or Section.
           </div>
         ) : (
           <table className="w-full text-left text-xs">
@@ -1157,7 +1157,7 @@ export function AdminContentPanel({
                 <th className="px-5 py-2.5">Play</th>
                 <th className="px-3 py-2.5">Content Node</th>
                 <th className="px-3 py-2.5">Block &amp; Lang</th>
-                <th className="px-3 py-2.5">Audio File &amp; Firestore ID</th>
+                <th className="px-3 py-2.5">Audio File &amp; Supabase ID</th>
                 <th className="px-3 py-2.5">Sync &amp; Status</th>
                 <th className="px-5 py-2.5 text-right">Actions</th>
               </tr>
@@ -1206,7 +1206,7 @@ export function AdminContentPanel({
                         {item.fileName} ({item.durationLabel} · {formatAudioFileSize(item.byteSize)})
                       </p>
                       <p className="font-mono text-[10px] text-blue-700">
-                        contentAudioMetadata/{item.id}
+                        content_audio_metadata/{item.id}
                       </p>
                     </td>
                     <td className="px-3 py-3">
@@ -1228,12 +1228,12 @@ export function AdminContentPanel({
                           {item.firestoreSynced ? (
                             <>
                               <CheckCircle2 className="h-3 w-3" />
-                              Firestore Synced
+                              Supabase Synced
                             </>
                           ) : (
                             <>
                               <Cloud className="h-3 w-3" />
-                              {isFirebaseSignedIn ? 'Linked' : 'Local · Sign in'}
+                              {isFirebaseSignedIn ? 'Linked' : 'Local Cache'}
                             </>
                           )}
                         </span>

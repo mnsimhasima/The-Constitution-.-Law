@@ -246,7 +246,7 @@ async function defaultFetchVersionManifest(
   signal?: AbortSignal
 ): Promise<OttVersionManifestResponse> {
   const qs = encodeURIComponent(editionIds.join(','));
-  const response = await fetch(`/api/ott/sync/manifest?editionIds=${qs}`, {
+  const response = await fetch(`/api/books-structures/sync/manifest?editionIds=${qs}`, {
     method: 'GET',
     headers: { Accept: 'application/json' },
     signal,
@@ -261,7 +261,7 @@ async function defaultPostDeltaSync(
   request: OttDeltaSyncRequest,
   signal?: AbortSignal
 ): Promise<OttDeltaSyncResponse> {
-  const response = await fetch('/api/ott/sync/delta', {
+  const response = await fetch('/api/books-structures/sync/delta', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(request),
@@ -277,10 +277,10 @@ async function defaultPostDeltaSync(
  * Automatic 2-Phase Background Sync Service for downloaded mobile offline books.
  *
  * Phase 1: Compares local version metadata (editionVersion, chapterVersions, unitVersions)
- *          against `/api/ott/sync/manifest` to identify stale editions without transferring
+ *          against `/api/books-structures/sync/manifest` to identify stale editions without transferring
  *          heavy content payloads when everything is already up to date.
- * Phase 2: Calls `/api/ott/sync/delta` ONLY for editions with version differences, downloads
- *          new/updated chapters, sections/articles, and their audio blobs into the private
+ * Phase 2: Calls `/api/books-structures/sync/delta` ONLY for editions with version differences, downloads
+ *          new/updated chapters, sections/articles/topics, and their manual audio blobs into the private
  *          IndexedDB vault, prunes deleted audio blobs, and notifies the mobile UI.
  */
 export function createOttDeltaSyncService(

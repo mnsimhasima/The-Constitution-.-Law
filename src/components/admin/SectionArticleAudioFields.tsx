@@ -135,11 +135,11 @@ export function ExistingClauseAudioPanel({
       );
 
       if (result.error) {
-        setLocalError(`Audio saved locally, but Firestore sync returned: ${result.error}`);
+        setLocalError(`Audio saved locally, but Supabase sync returned: ${result.error}`);
       } else {
         const syncNote = result.firestoreSynced
-          ? `Stored in Firestore at contentAudioMetadata/${result.record.id}`
-          : `Linked to node ${clause.id} (contentAudioMetadata/${result.record.id})`;
+          ? `Stored in Supabase DB + S3 at content_audio_metadata/${result.record.id}`
+          : `Linked to node ${clause.id} (content_audio_metadata/${result.record.id})`;
         onFeedback(`Uploaded "${uploaded.fileName}" for ${clause.number} (${role}). ${syncNote}.`);
       }
     } catch (err) {
@@ -284,7 +284,7 @@ export function ExistingClauseAudioPanel({
                     <div className="flex flex-wrap items-center justify-between gap-1 font-mono text-[10px] text-slate-500">
                       <span className="inline-flex items-center gap-1 truncate">
                         <Database className="h-2.5 w-2.5 shrink-0 text-blue-600" />
-                        <span className="truncate">contentAudioMetadata/{activeDocId}</span>
+                        <span className="truncate">content_audio_metadata/{activeDocId}</span>
                       </span>
                       <span
                         className={`inline-flex items-center gap-1 font-sans text-[10px] font-semibold ${
@@ -294,12 +294,12 @@ export function ExistingClauseAudioPanel({
                         {isSynced ? (
                           <>
                             <CheckCircle2 className="h-2.5 w-2.5" />
-                            Firestore Synced
+                            Supabase Synced
                           </>
                         ) : (
                           <>
                             <Cloud className="h-2.5 w-2.5" />
-                            {isFirebaseSignedIn ? 'Linked' : 'Local · Sign in for Cloud'}
+                            {isFirebaseSignedIn ? 'Linked' : 'Local Cache'}
                           </>
                         )}
                       </span>
@@ -351,7 +351,7 @@ export function DraftClauseAudioUploads({
             Dedicated Audio Files for {displayNode}
           </p>
           <p className="text-[11px] text-slate-600">
-            Audio metadata is stored in Firestore (<span className="font-mono">contentAudioMetadata</span>) and linked to this node.
+            Audio files upload to Supabase S3 and metadata is stored in Supabase PostgreSQL (<span className="font-mono">content_audio_metadata</span>).
           </p>
         </div>
       </div>

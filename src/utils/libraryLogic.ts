@@ -234,6 +234,7 @@ export function buildAudioQueue(
         spokenText: spokenHeader,
         estimatedSeconds: estimateSpeechSeconds(spokenHeader),
         domTargetId: `reader-chapter-header-${chapter.id}`,
+        ...(chapter.overviewAudioUrl ? { audioUrl: chapter.overviewAudioUrl } : {}),
       });
     }
   }
@@ -246,6 +247,18 @@ export function buildAudioQueue(
     const clauseText = getLocalizedText(clause.text, lang).trim();
     const explanationText = getLocalizedText(clause.explanation, lang).trim();
     const realWorldText = getLocalizedText(clause.realWorldExample, lang).trim();
+
+    const fullAudio = clause.audioAttachments?.full?.audioUrl;
+    const defAudio =
+      clause.audioAttachments?.definition?.audioUrl ??
+      clause.audioAttachments?.text?.audioUrl ??
+      fullAudio;
+    const expAudio =
+      clause.audioAttachments?.explanation?.audioUrl ??
+      clause.audioAttachments?.purpose?.audioUrl ??
+      clause.audioAttachments?.example?.audioUrl ??
+      fullAudio;
+    const headlineAudio = fullAudio ?? defAudio;
 
     // 1. Clause Headline (number + optional heading + principle)
     const headlineParts = [localizedClauseNum, headingText, principleText].filter(Boolean);
@@ -260,6 +273,7 @@ export function buildAudioQueue(
         spokenText: spokenHeadline,
         estimatedSeconds: estimateSpeechSeconds(spokenHeadline),
         domTargetId: `reader-clause-headline-${clause.id}`,
+        ...(headlineAudio ? { audioUrl: headlineAudio } : {}),
       });
     }
 
@@ -274,6 +288,7 @@ export function buildAudioQueue(
         spokenText: clauseText,
         estimatedSeconds: estimateSpeechSeconds(clauseText),
         domTargetId: `reader-clause-text-${clause.id}`,
+        ...(defAudio ? { audioUrl: defAudio } : {}),
       });
     }
 
@@ -294,6 +309,7 @@ export function buildAudioQueue(
         spokenText: spokenExplanation,
         estimatedSeconds: estimateSpeechSeconds(spokenExplanation),
         domTargetId: `reader-clause-explanation-${clause.id}`,
+        ...(expAudio ? { audioUrl: expAudio } : {}),
       });
     }
   }

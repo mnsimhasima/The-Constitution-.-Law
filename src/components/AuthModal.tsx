@@ -132,7 +132,7 @@ export function AuthModal({
                       Cross-device study vault
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Notes, color highlights, bookmarks, and custom law books stay backed up in Firestore.
+                      Notes, color highlights, bookmarks, and custom law books stay backed up in Supabase PostgreSQL.
                     </p>
                   </div>
                 </div>

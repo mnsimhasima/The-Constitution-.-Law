@@ -3,10 +3,37 @@ export type BookStructureType = OttBookType;
 
 export type OttUnitType = 'article' | 'section' | 'topic';
 export type ContentUnitType = OttUnitType;
+export type ContentNodeType = 'chapter' | 'article' | 'section' | 'topic';
 
 export type OttPublicationStatus = 'draft' | 'in_review' | 'published' | 'archived';
 
-export type OttAudioEntityType = 'edition' | 'chapter' | 'legal_unit' | 'cms_clause';
+export type OttAudioEntityType = 'edition' | 'chapter' | 'legal_unit' | 'content_node' | 'cms_clause';
+
+export interface ContentNode {
+  id: string;
+  editionId: string;
+  parentNodeId: string | null;
+  nodeType: ContentNodeType;
+  nodeOrder: number;
+  nodeNumber: string;
+  title: string;
+  definition: string;
+  purposeBackground: string;
+  deepExplanation: string;
+  practicalExamples: string;
+  estimatedMinutes: number;
+  overviewAudioUrl?: string;
+  definitionAudioUrl?: string;
+  purposeAudioUrl?: string;
+  explanationAudioUrl?: string;
+  examplesAudioUrl?: string;
+  fullAudioUrl?: string;
+  audioDurationSec: number;
+  versionNumber: number;
+  isDeleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export type OttAudioBlockRole =
   | 'book_description'
@@ -151,7 +178,10 @@ export interface OttAudioAsset {
   entityId: string;
   blockRole: OttAudioBlockRole;
   originalFilename: string;
+  s3Bucket?: string;
+  s3Key?: string;
   storageUrl: string;
+  publicUrl?: string;
   mimeType: string;
   byteSize: number;
   durationSec: number;

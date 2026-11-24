@@ -323,14 +323,15 @@ export function createChapterCacheManager(
         }
 
         const seg = queue[idx];
-        const cacheKey = buildAudioBlobCacheKey(seg.spokenText, language, voiceName);
+        const sourceKey = seg.audioUrl?.trim() || seg.spokenText;
+        const cacheKey = buildAudioBlobCacheKey(sourceKey, language, voiceName);
         segmentKeys.push(cacheKey);
 
         const existing = await store.getBlob(cacheKey);
         if (existing && existing.blob && existing.blob.size >= 44) {
           totalBytes += existing.byteSize || existing.blob.size;
         } else {
-          const blob = await fetchBlob(seg.spokenText, language, voiceName, signal);
+          const blob = await fetchBlob(sourceKey, language, voiceName, signal);
           if (blob.size < 44) {
             throw new Error(`Received invalid audio clip for ${seg.clauseNumber}.`);
           }

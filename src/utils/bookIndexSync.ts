@@ -116,6 +116,10 @@ function normalizeClause(raw: unknown, chapterId: string, idx: number): Clause |
   const principle = normalizeLocalizedText(c.principle, heading?.en || number);
   const explanation = normalizeLocalizedText(c.explanation ?? c.simpleExplanation, text.en);
   const realWorldExample = normalizeLocalizedText(c.realWorldExample, explanation.en);
+  const audioAttachments =
+    c.audioAttachments && typeof c.audioAttachments === 'object'
+      ? (c.audioAttachments as Clause['audioAttachments'])
+      : undefined;
   return {
     id,
     number,
@@ -124,6 +128,7 @@ function normalizeClause(raw: unknown, chapterId: string, idx: number): Clause |
     text,
     explanation,
     realWorldExample,
+    ...(audioAttachments ? { audioAttachments } : {}),
   };
 }
 
@@ -142,6 +147,16 @@ function normalizeChapter(raw: unknown, bookId: string, idx: number): Chapter | 
     typeof ch.estimatedMinutes === 'number' && Number.isFinite(ch.estimatedMinutes) && ch.estimatedMinutes > 0
       ? Math.round(ch.estimatedMinutes)
       : Math.max(2, clauses.length * 2);
+  const overviewAudioUrl =
+    typeof ch.overviewAudioUrl === 'string' && ch.overviewAudioUrl.trim()
+      ? ch.overviewAudioUrl.trim()
+      : undefined;
+  const versionNumber =
+    typeof ch.versionNumber === 'number' && Number.isFinite(ch.versionNumber)
+      ? ch.versionNumber
+      : undefined;
+  const updatedAt = typeof ch.updatedAt === 'string' ? ch.updatedAt : undefined;
+  const isDeleted = typeof ch.isDeleted === 'boolean' ? ch.isDeleted : undefined;
 
   return {
     id,
@@ -150,6 +165,10 @@ function normalizeChapter(raw: unknown, bookId: string, idx: number): Chapter | 
     summary,
     estimatedMinutes,
     clauses,
+    ...(overviewAudioUrl ? { overviewAudioUrl } : {}),
+    ...(versionNumber !== undefined ? { versionNumber } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+    ...(isDeleted !== undefined ? { isDeleted } : {}),
   };
 }
 
@@ -202,6 +221,25 @@ export function normalizeBookForIndex(
     .map((ch, idx) => normalizeChapter(ch, id, idx))
     .filter((ch): ch is Chapter => ch !== null);
 
+  const bookType =
+    b.bookType === 'constitutional' || b.bookType === 'general_law' || b.bookType === 'biography'
+      ? b.bookType
+      : undefined;
+  const masterBookId =
+    typeof b.masterBookId === 'string' && b.masterBookId.trim() ? b.masterBookId.trim() : undefined;
+  const editionId =
+    typeof b.editionId === 'string' && b.editionId.trim() ? b.editionId.trim() : undefined;
+  const descriptionAudioUrl =
+    typeof b.descriptionAudioUrl === 'string' && b.descriptionAudioUrl.trim()
+      ? b.descriptionAudioUrl.trim()
+      : undefined;
+  const versionNumber =
+    typeof b.versionNumber === 'number' && Number.isFinite(b.versionNumber)
+      ? b.versionNumber
+      : undefined;
+  const updatedAt = typeof b.updatedAt === 'string' ? b.updatedAt : undefined;
+  const isDeleted = typeof b.isDeleted === 'boolean' ? b.isDeleted : undefined;
+
   return {
     id,
     shortTitle,
@@ -213,6 +251,13 @@ export function normalizeBookForIndex(
     coverTone,
     ...(coverImage ? { coverImage } : {}),
     ...(b.isUserAdded === true ? { isUserAdded: true } : {}),
+    ...(bookType ? { bookType } : {}),
+    ...(masterBookId ? { masterBookId } : {}),
+    ...(editionId ? { editionId } : {}),
+    ...(descriptionAudioUrl ? { descriptionAudioUrl } : {}),
+    ...(versionNumber !== undefined ? { versionNumber } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+    ...(isDeleted !== undefined ? { isDeleted } : {}),
     chapters,
   };
 }
@@ -256,12 +301,16 @@ export function computeBookFingerprint(book: LawBook): string {
     category: book.category,
     coverTone: book.coverTone,
     coverImage: book.coverImage ?? '',
+    descriptionAudioUrl: book.descriptionAudioUrl ?? '',
+    versionNumber: book.versionNumber ?? 0,
     chapters: book.chapters.map((ch) => ({
       id: ch.id,
       number: ch.number,
       title: ch.title,
       summary: ch.summary,
       estimatedMinutes: ch.estimatedMinutes,
+      overviewAudioUrl: ch.overviewAudioUrl ?? '',
+      versionNumber: ch.versionNumber ?? 0,
       clauses: ch.clauses.map((cl) => ({
         id: cl.id,
         number: cl.number,
@@ -270,6 +319,7 @@ export function computeBookFingerprint(book: LawBook): string {
         text: cl.text,
         explanation: cl.explanation,
         realWorldExample: cl.realWorldExample,
+        audioAttachments: cl.audioAttachments ?? null,
       })),
     })),
   };
